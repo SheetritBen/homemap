@@ -20,16 +20,18 @@ function client(apiKey) {
   return new Anthropic({ apiKey, dangerouslyAllowBrowser: true, maxRetries: 3 });
 }
 
+// Always streamed: the SDK refuses non-streaming calls whose max_tokens could run long.
 // Server-side refusal fallback on; if the account/endpoint rejects the beta, retry without it.
 async function create(apiKey, params) {
   const c = client(apiKey);
+  const run = p => c.beta.messages.stream(p).finalMessage();
   let res;
   try {
-    res = await c.beta.messages.create({ ...params, betas: [FALLBACK_BETA], fallbacks: "default" });
+    res = await run({ ...params, betas: [FALLBACK_BETA], fallbacks: "default" });
   } catch (err) {
     if (err instanceof Anthropic.BadRequestError) {
       console.warn("retrying without fallback beta:", err.message);
-      res = await c.beta.messages.create(params);
+      res = await run(params);
     } else throw err;
   }
   meter(res);

@@ -327,12 +327,20 @@ async function finishScan() {
   const bounds = fitBounds(s.walls, s.detections);
   Object.keys(bounds).forEach(k => bounds[k] = +bounds[k].toFixed(2));
   let out;
-  try {
-    out = await consolidateRoom(getKey(), {
-      roomName: s.roomName, bounds, floor: mode(s.floor), wallColor: mode(s.wallColor),
-      detections: s.detections.map(({ bbox, frame, ...d }) => d),
-    });
-  } catch (e) { busy(); alert("Couldn't build the room: " + e.message); s.finishing = false; return; }
+  // photos are already analysed — on failure offer a retry instead of losing the scan
+  while (!out) {
+    try {
+      out = await consolidateRoom(getKey(), {
+        roomName: s.roomName, bounds, floor: mode(s.floor), wallColor: mode(s.wallColor),
+        detections: s.detections.map(({ bbox, frame, ...d }) => d),
+      });
+    } catch (e) {
+      console.error(e);
+      busy();
+      if (!confirm(`Couldn't build the room: ${e.message}\n\nTry again? (your photos are kept)`)) { endScan(); go("home"); return; }
+      busy("Building your room…", "Retrying");
+    }
+  }
 
   busy("Saving photos…");
   const items = out.items.map(it => {
