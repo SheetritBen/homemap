@@ -1,5 +1,5 @@
-import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=6";
-import { createView } from "./view3d.js?v=6";
+import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=7";
+import { createView } from "./view3d.js?v=7";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -64,7 +64,7 @@ $("#btnTestKey").onclick = async () => {
 async function exportScans() {
   if (!db.rooms.length) return alert("Nothing to export yet.");
   const name = `homemap-export-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
-  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), build: 6, ua: navigator.userAgent, ...db }, null, 1)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), build: 7, ua: navigator.userAgent, ...db }, null, 1)], { type: "application/json" });
   const file = new File([blob], name, { type: "application/json" });
   try { if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: "HomeMap scan" }); }
   catch (e) { if (e.name === "AbortError") return; }
@@ -489,7 +489,7 @@ function priceTag(it) {
   return `<span class="tag">AI estimate</span>`;
 }
 
-// scans before build 6 have no small_item flag: treat cheap accessories as small
+// scans before build 7 have no small_item flag: treat cheap accessories as small
 const isSmall = it => it.small ?? (+it.price || 0) < 100;
 function itemRows(r, items) {
   return [...items].sort((a, b) => (b.price || 0) - (a.price || 0)).map(it => `

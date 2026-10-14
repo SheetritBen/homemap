@@ -27,6 +27,7 @@ const AGAINST_WALL = new Set(["sofa", "wardrobe", "shelf", "dresser", "bed", "de
 const WALL_MOUNT = new Set(["ac", "wall_art"]);
 const ON_SURFACE = new Set(["monitor", "laptop", "keyboard", "mouse", "headphones", "lamp", "deskmat"]);
 const SURFACE = new Set(["desk", "table", "dresser", "shelf", "wardrobe"]);
+const SOFT = new Set(["pillow", "textile"]); // go on seats, handled after chairs are placed
 const SEATS = new Set(["chair", "office_chair", "armchair"]);
 
 // local (item frame) <-> world, matching three.js rotation.y
@@ -94,7 +95,7 @@ export function layoutRoom(room) {
 
   // 3. things that sit on furniture (desk items, bags on top of the wardrobe)
   for (const p of P) {
-    if (p.fixed || p.floor) continue;
+    if (p.fixed || p.floor || SOFT.has(p.shape)) continue;
     const wantsSurface = ON_SURFACE.has(p.shape) || p.mount === "on_furniture" || (p.elev > 0.3 && p.shape !== "pillow") ||
       (p.shape === "box" && Math.max(p.w, p.d, p.h) < 0.45) || (p.shape === "wall_art" && p.h < 0.4);
     if (!wantsSurface) continue;
@@ -128,25 +129,10 @@ export function layoutRoom(room) {
 
   for (const p of P) if (p.on) p.local = toLocal(p.on, p.x, p.z);
 
-  // 4. pillows onto the nearest sofa / bed / armchair
-  const seats = P.filter(p => p.shape === "sofa" || p.shape === "bed" || p.shape === "armchair");
-  for (const p of P.filter(q => (q.shape === "pillow" || q.shape === "textile") && !q.fixed)) {
-    const s = seats.map(s => [s, Math.hypot(s.x - p.x, s.z - p.z)]).sort((a, c) => a[1] - c[1])[0]?.[0];
-    if (!s) { p.floor = true; continue; }
-    const n = P.filter(q => q.pillowOn === s).length;
-    p.pillowOn = s;
-    const lx = clamp(-s.w / 2 + 0.35 + n * (p.w + 0.08), -s.w / 2 + p.w / 2 + 0.15, s.w / 2 - p.w / 2 - 0.15);
-    const lz = -s.d / 2 + (s.shape === "sofa" ? Math.min(0.24, s.d * 0.28) : 0.12) + p.d / 2 + 0.02;
-    [p.x, p.z] = toWorld(s, lx, lz);
-    p.local = [lx, lz];
-    p.rot = s.rot; p.y = s.shape === "bed" ? 0.5 : s.shape === "sofa" ? Math.max(0.38, s.h * 0.5) : 0.46;
-    p.tilt = -0.25; p.fixed = true;
-  }
-
   // 5. remaining floor items; seats face the nearest desk/table
   const desks = P.filter(p => p.shape === "desk" || p.shape === "table");
   for (const p of P) {
-    if (p.fixed || p.floor) continue;
+    if (p.fixed || p.floor || SOFT.has(p.shape)) continue;
     p.floor = true;
     if (SEATS.has(p.shape)) {
       const dsk = desks.map(d => [d, Math.hypot(d.x - p.x, d.z - p.z)]).sort((a, c) => a[1] - c[1])[0];
@@ -162,6 +148,21 @@ export function layoutRoom(room) {
       if (dist < 0.6 && Math.max(p.w, p.d) > 0.25) placeOnWall(W, b, p, k);
       else p.rot = snap90(Math.atan2(cx - p.x, cz - p.z));
     }
+  }
+
+  // 5b. pillows onto the nearest sofa / bed; scarves and throws onto any seat
+  const soft = p => p.shape === "pillow" ? ["sofa", "bed", "armchair"] : ["sofa", "bed", "armchair", "chair", "office_chair"];
+  for (const p of P.filter(q => (q.shape === "pillow" || q.shape === "textile") && !q.fixed)) {
+    const s = P.filter(q => soft(p).includes(q.shape)).map(s => [s, Math.hypot(s.x - p.x, s.z - p.z)]).sort((a, c) => a[1] - c[1])[0]?.[0];
+    if (!s) { p.floor = true; continue; }
+    const n = P.filter(q => q.pillowOn === s).length;
+    p.pillowOn = s;
+    const lx = clamp(-s.w / 2 + 0.35 + n * (p.w + 0.08), -s.w / 2 + p.w / 2 + 0.15, s.w / 2 - p.w / 2 - 0.15);
+    const lz = -s.d / 2 + (s.shape === "sofa" ? Math.min(0.24, s.d * 0.28) : 0.12) + p.d / 2 + 0.02;
+    [p.x, p.z] = toWorld(s, lx, lz);
+    p.local = [lx, lz];
+    p.rot = s.rot; p.y = s.shape === "bed" ? 0.5 : s.shape === "sofa" ? Math.max(0.38, s.h * 0.5) : Math.min(0.48, s.h * 0.48);
+    p.tilt = -0.25; p.fixed = true;
   }
 
   // 6a. furniture sharing a wall is packed as a row (pairwise pushing oscillates when one piece is squeezed between two)

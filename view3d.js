@@ -2,8 +2,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { buildModel } from "./models.js?v=6";
-import { layoutRoom, WALL_H } from "./layout.js?v=6";
+import { buildModel } from "./models.js?v=7";
+import { layoutRoom, WALL_H } from "./layout.js?v=7";
 
 const SMALL = new Set(["mouse", "keyboard", "headphones", "pillow"]);
 
