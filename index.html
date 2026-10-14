@@ -139,6 +139,7 @@
       <input id="roomName" placeholder="Room name" value="Office" style="margin-bottom:10px">
       <button class="primary" id="btnStartScan" style="width:100%">Start scan</button>
       <button id="btnUpload" style="width:100%;margin-top:8px">Or upload room photos</button>
+      <p class="muted small" style="text-align:center;margin:10px 0 0">build 3</p>
       <input type="file" id="fileUpload" accept="image/*" multiple hidden>
     </div>
     <div id="roomList"></div>
@@ -192,7 +193,7 @@
     </div>
     <div class="card">
       <b>Data</b>
-      <p class="muted small">Everything lives on this phone.</p>
+      <p class="muted small">Everything lives on this phone. Build 3.</p>
       <button id="btnWipe">Delete all rooms</button>
     </div>
   </div>
@@ -209,6 +210,6 @@
 
 <div class="busy" id="busy"><div class="spinner"></div><div id="busyMsg">Working…</div><div class="muted small" id="busySub"></div></div>
 
-<script type="module" src="app.js"></script>
+<script type="module" src="app.js?v=3"></script>
 </body>
 </html>

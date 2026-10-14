@@ -124,7 +124,7 @@ For each item:
 export async function consolidateRoom(apiKey, { roomName, bounds, detections, floor, wallColor }) {
   if (MOCK) return mockRoom(detections);
   const res = await create(apiKey, {
-    model: MODEL, max_tokens: 32000,
+    model: MODEL, max_tokens: 16000,
     output_config: { effort: "medium", format: { type: "json_schema", schema: ROOM_SCHEMA } },
     system: ROOM_SYSTEM,
     messages: [{ role: "user", content:

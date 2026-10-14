@@ -1,5 +1,5 @@
-import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js";
-import { createView } from "./view3d.js";
+import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=3";
+import { createView } from "./view3d.js?v=3";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

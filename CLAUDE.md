@@ -7,4 +7,5 @@ Kill-test prototype for the home-scan "digital twin" idea. Static site, no build
 - Base iPhone 17 has no LiDAR; the map comes from compass heading + Claude's distance estimates, not AR.
 - Israeli market: prices in ₪, Israeli retailers (zap/ksp/ivory/ikea.co.il...).
 - Cost (2026-10-14): Sonnet 5.5, 8 frames @1024px, NO automatic web price search (was ~75% of cost). Prices = AI estimate + free search links. Next step if test passes: SerpApi Google Shopping (gl=il) via a Cloudflare Worker, ~1.5¢/item.
+- Safari caches modules (Pages max-age=600): on EVERY deploy bump the build number in index.html (app.js?v=N + "build N" labels) and app.js imports (?v=N).
 - `?mock` = fake detections for UI testing without a key.
