@@ -1,5 +1,5 @@
-import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=3";
-import { createView } from "./view3d.js?v=3";
+import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=4";
+import { createView } from "./view3d.js?v=4";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -60,6 +60,19 @@ $("#btnTestKey").onclick = async () => {
   try { await testKey($("#apiKey").value.trim()); $("#keyMsg").textContent = "✓ Key works."; }
   catch (e) { $("#keyMsg").textContent = "✗ " + e.message; }
 };
+// share everything as one JSON file (share sheet on iPhone, download elsewhere)
+async function exportScans() {
+  if (!db.rooms.length) return alert("Nothing to export yet.");
+  const name = `homemap-export-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), build: 4, ua: navigator.userAgent, ...db }, null, 1)], { type: "application/json" });
+  const file = new File([blob], name, { type: "application/json" });
+  try { if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: "HomeMap scan" }); }
+  catch (e) { if (e.name === "AbortError") return; }
+  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: name });
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+$("#btnExport").onclick = exportScans;
+$("#btnExport2").onclick = exportScans;
 $("#btnWipe").onclick = () => { if (confirm("Delete every room and item?")) { db = { rooms: [] }; save(); go("home"); } };
 
 // =====================================================================
@@ -357,7 +370,10 @@ async function finishScan() {
   });
 
   const existing = db.rooms.find(r => r.name.toLowerCase() === s.roomName.toLowerCase());
-  const room = { id: existing?.id || uid(), name: s.roomName, scannedAt: Date.now(), cost: spend.usd, bounds, floor: out.floor, wallColor: out.wall_color, items };
+  const room = { id: existing?.id || uid(), name: s.roomName, scannedAt: Date.now(), cost: spend.usd, bounds, floor: out.floor, wallColor: out.wall_color, items,
+    // raw scan data kept for tuning map accuracy (small: text only)
+    raw: { frames: s.frames.length, walls: s.walls.map(w => ({ angle: Math.round(w.angle), dist: +w.dist.toFixed(2) })),
+      detections: s.detections.map(({ bbox, ...d }) => d) } };
   db.rooms = db.rooms.filter(r => r !== existing).concat(room);
   save();
   endScan(); busy();
