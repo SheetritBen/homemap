@@ -145,7 +145,7 @@
       <input id="roomSize" placeholder="Room size, optional (e.g. 3 × 3 m)" inputmode="text" style="margin-bottom:10px">
       <button class="primary" id="btnStartScan" style="width:100%">Start scan</button>
       <button id="btnUpload" style="width:100%;margin-top:8px">Or upload room photos</button>
-      <p class="muted small" style="text-align:center;margin:10px 0 0">build 8</p>
+      <p class="muted small" style="text-align:center;margin:10px 0 0">build 9</p>
       <input type="file" id="fileUpload" accept="image/*" multiple hidden>
     </div>
     <div id="roomList"></div>
@@ -208,8 +208,10 @@
     </div>
     <div class="card">
       <b>Data</b>
-      <p class="muted small">Everything lives on this phone. Build 8.</p>
-      <button id="btnExport2" style="margin-bottom:8px">Export scans</button><br>
+      <p class="muted small">Everything lives on this phone. Build 9.</p>
+      <button id="btnExport2" style="margin-bottom:8px">Export scans</button>
+      <button id="btnImport" style="margin-bottom:8px">Import scans</button><br>
+      <input type="file" id="fileImport" accept=".json,application/json" hidden>
       <button id="btnWipe">Delete all rooms</button>
     </div>
   </div>
@@ -226,6 +228,6 @@
 
 <div class="busy" id="busy"><div class="spinner"></div><div id="busyMsg">Working…</div><div class="muted small" id="busySub"></div></div>
 
-<script type="module" src="app.js?v=8"></script>
+<script type="module" src="app.js?v=9"></script>
 </body>
 </html>

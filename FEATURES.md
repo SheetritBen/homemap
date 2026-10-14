@@ -13,6 +13,7 @@
 - [ ] Item card: name/price/store editable, delete
 - [ ] Catalog: per-room chips + All, sorted by price, room totals
 - [ ] Rescan of a room with the same name replaces it
+- [ ] Import scans (Settings) loads an export back; same-name rooms replaced
 - [ ] Export scans → one JSON (rooms, items, photos, cost, raw detections/walls) via share sheet
 - [ ] `?mock` runs the whole flow with fake detections (no key, no cost)
 - [ ] Works at 390px width

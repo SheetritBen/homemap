@@ -1,5 +1,5 @@
-import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=8";
-import { createView } from "./view3d.js?v=8";
+import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=9";
+import { createView } from "./view3d.js?v=9";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -65,7 +65,7 @@ $("#btnTestKey").onclick = async () => {
 async function exportScans() {
   if (!db.rooms.length) return alert("Nothing to export yet.");
   const name = `homemap-export-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
-  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), build: 8, ua: navigator.userAgent, ...db }, null, 1)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), build: 9, ua: navigator.userAgent, ...db }, null, 1)], { type: "application/json" });
   const file = new File([blob], name, { type: "application/json" });
   try { if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: "HomeMap scan" }); }
   catch (e) { if (e.name === "AbortError") return; }
@@ -74,6 +74,24 @@ async function exportScans() {
 }
 $("#btnExport").onclick = exportScans;
 $("#btnExport2").onclick = exportScans;
+
+// load an export back in: rooms with the same name are replaced, others are added
+$("#btnImport").onclick = () => $("#fileImport").click();
+$("#fileImport").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  let data;
+  try { data = JSON.parse(await f.text()); } catch { return alert("That file isn't a HomeMap export."); }
+  const rooms = Array.isArray(data?.rooms) ? data.rooms.filter(r => r && r.name && Array.isArray(r.items) && r.bounds) : [];
+  if (!rooms.length) return alert("No rooms found in that file.");
+  const names = rooms.map(r => `${r.name} (${r.items.length} items)`).join("\n");
+  if (!confirm(`Import these rooms?\n\n${names}\n\nRooms with the same name on this phone will be replaced.`)) return;
+  const incoming = new Set(rooms.map(r => r.name.toLowerCase()));
+  db.rooms = db.rooms.filter(r => !incoming.has(r.name.toLowerCase())).concat(rooms);
+  save();
+  current3dRoom = rooms.at(-1).id;
+  go("view3d");
+};
 $("#btnWipe").onclick = () => { if (confirm("Delete every room and item?")) { db = { rooms: [] }; save(); go("home"); } };
 
 // =====================================================================
@@ -570,7 +588,7 @@ function priceTag(it) {
   return `<span class="tag">AI estimate</span>`;
 }
 
-// scans before build 8 have no small_item flag: treat cheap accessories as small
+// scans before build 9 have no small_item flag: treat cheap accessories as small
 const isSmall = it => !isStructure(it) && (it.small ?? (+it.price || 0) < 100);
 const isMain = it => !isStructure(it) && !isSmall(it);
 function itemRows(r, items) {
