@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0e1116">
+<title>HomeMap</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #171b22; --panel2: #1f2530; --line: #2a3140;
+    --text: #e8ecf2; --muted: #8b95a7; --accent: #4fd1a5; --warn: #f5b84b; --bad: #f2667a;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  button { font: inherit; color: inherit; border: 0; background: var(--panel2); border-radius: 10px;
+    padding: 10px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: #062a1e; font-weight: 600; }
+  button:disabled { opacity: .4; }
+  input { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; width: 100%; }
+  .screen { position: fixed; inset: 0; display: none; flex-direction: column;
+    padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .screen.active { display: flex; }
+  header { padding: calc(14px + env(safe-area-inset-top)) 16px 10px; display: flex; align-items: center; gap: 10px; }
+  header h1 { font-size: 20px; margin: 0; flex: 1; }
+  .scroll { overflow-y: auto; flex: 1; padding: 0 16px 16px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+
+  /* tabs */
+  nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: var(--panel);
+    border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); z-index: 20; }
+  nav.tabs button { flex: 1; background: none; border-radius: 0; padding: 10px 0 12px; color: var(--muted);
+    display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 12px; }
+  nav.tabs button.on { color: var(--accent); }
+  nav.tabs svg { width: 22px; height: 22px; }
+  body.scanning nav.tabs { display: none; }
+
+  /* home */
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+  .room-row { display: flex; align-items: center; gap: 12px; }
+  .room-row .meta { flex: 1; }
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 4px 16px 10px; }
+  .chip { white-space: nowrap; padding: 7px 12px; border-radius: 999px; background: var(--panel2); font-size: 14px; }
+  .chip.on { background: var(--accent); color: #062a1e; font-weight: 600; }
+
+  /* scan */
+  #scan { padding-bottom: 0; background: #000; }
+  #scan video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .scan-top { position: absolute; top: 0; left: 0; right: 0; padding: calc(12px + env(safe-area-inset-top)) 12px 12px;
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
+    background: linear-gradient(#000a, #0000); }
+  #minimap { width: 150px; height: 150px; border-radius: 16px; background: #0e1116cc; border: 1px solid #ffffff22; }
+  .scan-status { background: #0e1116cc; border-radius: 12px; padding: 8px 12px; font-size: 14px; max-width: 55%; }
+  .scan-status b { color: var(--accent); }
+  .reticle { position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; margin: -32px 0 0 -32px;
+    border: 2px solid #ffffffaa; border-radius: 50%; pointer-events: none; transition: .2s; }
+  .reticle.snap { border-color: var(--accent); transform: scale(1.25); }
+  .scan-feed { position: absolute; left: 12px; right: 12px; bottom: calc(96px + env(safe-area-inset-bottom));
+    display: flex; flex-wrap: wrap-reverse; gap: 6px; max-height: 30vh; overflow: hidden; }
+  .scan-feed span { background: #0e1116d0; border: 1px solid #4fd1a555; border-radius: 999px; padding: 4px 10px; font-size: 13px;
+    animation: pop .3s ease-out; }
+  @keyframes pop { from { transform: scale(.6); opacity: 0; } }
+  .scan-bottom { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+    display: flex; gap: 10px; align-items: center; background: linear-gradient(#0000, #000c); }
+  .shutter { width: 68px; height: 68px; border-radius: 50%; background: #fff; border: 5px solid #ffffff55; padding: 0; flex: none; }
+  .shutter:active { transform: scale(.94); }
+  .scan-bottom .grow { flex: 1; }
+  .busy { position: fixed; inset: 0; background: #0e1116f0; z-index: 50; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; }
+  .busy.on { display: flex; }
+  .spinner { width: 42px; height: 42px; border: 4px solid var(--line); border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 3d */
+  #view3d { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  #stage { flex: 1; position: relative; touch-action: none; }
+  #stage canvas { display: block; width: 100%; height: 100%; }
+  .stage-hint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: #0e1116cc;
+    padding: 6px 12px; border-radius: 999px; font-size: 13px; color: var(--muted); pointer-events: none; white-space: nowrap; }
+
+  /* catalog */
+  .item { display: flex; gap: 12px; align-items: center; padding: 10px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); margin-bottom: 10px; cursor: pointer; }
+  .item img, .thumb-ph { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; background: var(--panel2); flex: none; }
+  .item .meta { flex: 1; min-width: 0; }
+  .item .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .price { font-weight: 600; text-align: right; white-space: nowrap; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--panel2); color: var(--muted); }
+  .tag.ok { background: #4fd1a522; color: var(--accent); }
+  .total { display: flex; justify-content: space-between; padding: 12px 2px; font-weight: 600; }
+
+  /* sheet */
+  .sheet-back { position: fixed; inset: 0; background: #0008; z-index: 30; display: none; }
+  .sheet-back.on { display: block; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 31; background: var(--panel); border-radius: 18px 18px 0 0;
+    padding: 10px 16px calc(18px + env(safe-area-inset-bottom)); transform: translateY(105%); transition: transform .25s;
+    max-height: 80vh; overflow-y: auto; border-top: 1px solid var(--line); }
+  .sheet.on { transform: none; }
+  .sheet .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line); margin: 0 auto 12px; }
+  .sheet-head { display: flex; gap: 12px; align-items: center; }
+  .sheet-head img, .sheet-head .thumb-ph { width: 84px; height: 84px; }
+  .sheet h2 { margin: 0 0 2px; font-size: 18px; }
+  .kv { display: grid; grid-template-columns: 96px 1fr; gap: 8px 10px; margin-top: 14px; font-size: 14px; align-items: center; }
+  .kv .k { color: var(--muted); }
+  .kv input { padding: 6px 8px; }
+  .big-price { font-size: 22px; font-weight: 700; color: var(--accent); }
+  a { color: var(--accent); }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/",
+  "anthropic": "https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.131.0/+esm"
+} }
+</script>
+</head>
+<body>
+
+<!-- HOME -->
+<section class="screen active" id="home">
+  <header><h1>HomeMap</h1><button id="btnSettings" aria-label="Settings">⚙︎</button></header>
+  <div class="scroll">
+    <div class="card" id="keyWarn" hidden>
+      <b>Add your Anthropic API key</b>
+      <p class="muted small">It's stored only on this phone. Needed to recognize items.</p>
+      <button class="primary" data-go="settings">Open settings</button>
+    </div>
+    <div class="card">
+      <b>Scan a room</b>
+      <p class="muted small">Stand in the middle of the room, face a wall, then turn slowly in a full circle. The map fills in as you go.</p>
+      <input id="roomName" placeholder="Room name" value="Office" style="margin-bottom:10px">
+      <button class="primary" id="btnStartScan" style="width:100%">Start scan</button>
+      <button id="btnUpload" style="width:100%;margin-top:8px">Or upload room photos</button>
+      <input type="file" id="fileUpload" accept="image/*" multiple hidden>
+    </div>
+    <div id="roomList"></div>
+  </div>
+</section>
+
+<!-- SCAN -->
+<section class="screen" id="scan">
+  <video id="video" playsinline muted autoplay></video>
+  <div class="reticle" id="reticle"></div>
+  <div class="scan-top">
+    <div class="scan-status" id="scanStatus">Turn slowly…</div>
+    <canvas id="minimap" width="300" height="300"></canvas>
+  </div>
+  <div class="scan-feed" id="scanFeed"></div>
+  <div class="scan-bottom">
+    <button id="btnCancelScan">Cancel</button>
+    <div class="grow"></div>
+    <button class="shutter" id="btnShutter" aria-label="Capture"></button>
+    <div class="grow"></div>
+    <button class="primary" id="btnFinish" disabled>Finish</button>
+  </div>
+</section>
+
+<!-- 3D -->
+<section class="screen" id="view3d">
+  <div class="chips" id="roomChips3d"></div>
+  <div id="stage"><div class="stage-hint">Drag to orbit · pinch to zoom · tap an item</div></div>
+</section>
+
+<!-- CATALOG -->
+<section class="screen" id="catalog">
+  <header><h1>Catalog</h1></header>
+  <div class="chips" id="roomChips"></div>
+  <div class="scroll" id="catalogList"></div>
+</section>
+
+<!-- SETTINGS -->
+<section class="screen" id="settings">
+  <header><h1>Settings</h1></header>
+  <div class="scroll">
+    <div class="card">
+      <b>Anthropic API key</b>
+      <p class="muted small">Stored on this device only (localStorage). Never sent anywhere except api.anthropic.com.</p>
+      <input id="apiKey" type="password" placeholder="sk-ant-…" autocomplete="off">
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="primary" id="btnSaveKey">Save</button>
+        <button id="btnTestKey">Test key</button>
+      </div>
+      <p class="small" id="keyMsg"></p>
+    </div>
+    <div class="card">
+      <b>Data</b>
+      <p class="muted small">Everything lives on this phone.</p>
+      <button id="btnWipe">Delete all rooms</button>
+    </div>
+  </div>
+</section>
+
+<nav class="tabs" id="tabs">
+  <button data-go="home" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Scan</button>
+  <button data-go="view3d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M12 22V12M21 7l-9 5-9-5"/></svg>3D</button>
+  <button data-go="catalog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Catalog</button>
+</nav>
+
+<div class="sheet-back" id="sheetBack"></div>
+<div class="sheet" id="sheet"></div>
+
+<div class="busy" id="busy"><div class="spinner"></div><div id="busyMsg">Working…</div><div class="muted small" id="busySub"></div></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
