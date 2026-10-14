@@ -1,5 +1,5 @@
-import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=5";
-import { createView } from "./view3d.js?v=5";
+import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=6";
+import { createView } from "./view3d.js?v=6";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -64,7 +64,7 @@ $("#btnTestKey").onclick = async () => {
 async function exportScans() {
   if (!db.rooms.length) return alert("Nothing to export yet.");
   const name = `homemap-export-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
-  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), build: 5, ua: navigator.userAgent, ...db }, null, 1)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), build: 6, ua: navigator.userAgent, ...db }, null, 1)], { type: "application/json" });
   const file = new File([blob], name, { type: "application/json" });
   try { if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: "HomeMap scan" }); }
   catch (e) { if (e.name === "AbortError") return; }
@@ -89,7 +89,7 @@ function newScan(roomName) {
     roomName, frames: [], sectors: Array(SECTORS).fill(0), // 0 none, 1 analysing, 2 done
     walls: [], detections: [], floor: [], wallColor: [],
     heading: null, h0: null, hist: [], lastCapture: 0, inflight: 0, queue: [], finishing: false,
-    stream: null, raf: 0, hasCompass: false, motion: [], lens: "wide", holding: false,
+    stream: null, raf: 0, hasCompass: false, motion: [], lens: "wide", holding: false, jolts: [], walkingUntil: 0,
   };
 }
 const angDiff = (a, b) => ((a - b + 540) % 360) - 180;
@@ -146,11 +146,20 @@ function onOrient(e) {
 }
 
 function onMotion(e) {
-  const r = e.rotationRate;
-  if (!scan || !r || r.alpha == null) return;
-  scan.motion.push([performance.now(), Math.hypot(r.alpha, r.beta, r.gamma)]); // deg/s
-  if (scan.motion.length > 60) scan.motion.shift();
+  if (!scan) return;
+  const now = performance.now(), r = e.rotationRate, a = e.acceleration;
+  if (r && r.alpha != null) {
+    scan.motion.push([now, Math.hypot(r.alpha, r.beta, r.gamma)]); // deg/s
+    if (scan.motion.length > 60) scan.motion.shift();
+  }
+  // walking shows up as repeated jolts in linear acceleration (gravity removed); turning in place doesn't
+  if (a && a.x != null && Math.hypot(a.x, a.y, a.z) > 1.8) {
+    scan.jolts.push(now);
+    scan.jolts = scan.jolts.filter(t => now - t < 2000);
+    if (scan.jolts.length >= 4) scan.walkingUntil = now + 2500;
+  }
 }
+const walking = () => scan && performance.now() < scan.walkingUntil;
 
 // held still for ~0.6 s: compass barely moving and (when available) the gyro quiet → sharp photo
 function stable() {
@@ -171,7 +180,7 @@ function tick() {
     const off = Math.abs(angDiff(rel, s * SECTOR_DEG));
     snap = !scan.sectors[s] && off < 9;
     scan.holding = snap && !stable();
-    if (snap && !scan.holding && performance.now() - scan.lastCapture > 700) capture(rel, s);
+    if (snap && !scan.holding && !walking() && performance.now() - scan.lastCapture > 700) capture(rel, s);
   }
   $("#reticle").classList.toggle("snap", snap);
   drawMap();
@@ -276,7 +285,8 @@ function updateStatus() {
   const got = scan.sectors.filter(Boolean).length;
   const waiting = scan.inflight + scan.queue.length;
   let msg;
-  if (got < SECTORS && !scan.hasCompass && !scan.uploadMode) msg = `No compass — tap the shutter as you turn (${got}/${SECTORS})`;
+  if (got < SECTORS && walking()) msg = `<b style="color:var(--warn)">Stay on one spot</b> — turn in place, don't walk`;
+  else if (got < SECTORS && !scan.hasCompass && !scan.uploadMode) msg = `No compass — tap the shutter as you turn (${got}/${SECTORS})`;
   else if (got < SECTORS && scan.holding) msg = `<b>Hold still…</b> ${got}/${SECTORS}`;
   else if (got < SECTORS) msg = `Turn slowly · <b>${got}/${SECTORS}</b> captured`;
   else if (waiting) msg = `Map complete · identifying ${waiting} views…`;
@@ -376,6 +386,8 @@ async function finishScan() {
       out = await consolidateRoom(getKey(), {
         roomName: s.roomName, bounds, floor: mode(s.floor), wallColor: mode(s.wallColor),
         detections: s.detections.map(({ bbox, frame, ...d }) => d), // mount/elevation included
+        crops: s.detections.map(d => ({ id: d.id, confidence: d.confidence,
+          b64: thumbFrom(s.frames[d.frame].canvas, d.bbox, 160, 0.6).split(",")[1] })),
       });
     } catch (e) {
       console.error(e);
@@ -414,14 +426,14 @@ async function finishScan() {
 
 const clampTo = (v, a, b) => Math.min(b - 0.15, Math.max(a + 0.15, +v || 0));
 
-function thumbFrom(canvas, bbox) {
+function thumbFrom(canvas, bbox, side = 360, quality = 0.72) {
   const pad = 0.04;
   const x0 = Math.max(0, (bbox?.x0 ?? 0) - pad) * canvas.width, y0 = Math.max(0, (bbox?.y0 ?? 0) - pad) * canvas.height;
   const x1 = Math.min(1, (bbox?.x1 ?? 1) + pad) * canvas.width, y1 = Math.min(1, (bbox?.y1 ?? 1) + pad) * canvas.height;
-  const sw = Math.max(8, x1 - x0), sh = Math.max(8, y1 - y0), side = 360, sc = side / Math.max(sw, sh);
+  const sw = Math.max(8, x1 - x0), sh = Math.max(8, y1 - y0), sc = side / Math.max(sw, sh);
   const c = document.createElement("canvas"); c.width = Math.round(sw * sc); c.height = Math.round(sh * sc);
   c.getContext("2d").drawImage(canvas, x0, y0, sw, sh, 0, 0, c.width, c.height);
-  return c.toDataURL("image/jpeg", 0.72);
+  return c.toDataURL("image/jpeg", quality);
 }
 
 function refreshVisible() {
@@ -477,7 +489,7 @@ function priceTag(it) {
   return `<span class="tag">AI estimate</span>`;
 }
 
-// scans before build 5 have no small_item flag: treat cheap accessories as small
+// scans before build 6 have no small_item flag: treat cheap accessories as small
 const isSmall = it => it.small ?? (+it.price || 0) < 100;
 function itemRows(r, items) {
   return [...items].sort((a, b) => (b.price || 0) - (a.price || 0)).map(it => `

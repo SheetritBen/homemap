@@ -21,3 +21,6 @@
 - [ ] 3D models: sofa (arms/cushions/legs), chairs (legs), office chair, desk, monitor (stand + screen), laptop (open lid), wardrobe (doors/handles), AC, printer, bags, pillows…
 - [ ] Old scans (no shape data) still render via name-based shape guessing
 - [ ] Catalog: small accessories folded into a "Small items" group
+- [ ] Room merge sees a labelled photo crop of every sighting (visual dedupe); told distances are unreliable, angles reliable; multi-panel art / sofa bed / one laptop counted once
+- [ ] Furniture along the same wall is packed as a row (no piece squeezed inside another)
+- [ ] Walking during a scan → "Stay on one spot" warning and auto-capture pauses

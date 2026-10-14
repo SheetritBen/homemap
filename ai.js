@@ -122,7 +122,9 @@ const ROOM_SCHEMA = obj({
 
 const ROOM_SYSTEM = `You turn raw per-frame detections from a 360° room scan into one clean inventory for a home in Israel.
 
-The same physical object is usually detected in 2-3 neighbouring frames under slightly different names and positions. Merge those into one item. Keep genuinely separate objects separate (two identical chairs at different spots = two items). Drop low-confidence junk and structural parts.
+The camera is a wide lens and consecutive frames overlap heavily, so the same physical object is usually detected in 2-4 frames under different names ("beige chair" / "wooden stool with cushion" / "upholstered chair") and at different positions. Each sighting comes with a labelled photo crop: compare the crops and merge sightings that show the same object. Keep genuinely separate objects separate (two identical chairs at clearly different spots = two items). Drop low-confidence junk and structural parts. Count each physical object once: a multi-panel artwork (diptych, 4-panel set) is ONE item; a sofa bed is a sofa whether folded or open; a laptop seen open and "on a stand" from two angles is one laptop.
+
+Distance estimates are unreliable (often off by 30-60%), so x/z positions of the same object can disagree by a meter. The angle (direction from the scanner, degrees clockwise from the starting direction) is accurate. Two sightings of similar-looking things within about 45° of each other are almost always the same object. A dresser or cabinet sighted where the desk is, is usually the desk seen from another side. For the merged position, trust the angle and use the most plausible distance (things against a wall sit near the room bounds).
 
 Coordinates: the scanner stood at (0,0). x = meters to the right, z = meters toward the back (negative z is the direction the user faced at the start). Keep each item's merged position inside the given room bounds.
 
@@ -136,14 +138,23 @@ For each item:
 - small_item: true for small accessories and clutter (remotes, phone stands, desk mats, chargers, small decor). Valuables like watches, headphones, cameras are NOT small items.
 - likely_store: the Israeli retailer this would most likely be bought from, e.g. IKEA Israel, ACE, Home Center, KSP, Ivory, Bug, Zap, Golf & Co, Fox Home, Hamashbir, Shufersal Online, AliExpress, Amazon (shipped to Israel), or the brand's Israeli importer.`;
 
-export async function consolidateRoom(apiKey, { roomName, bounds, detections, floor, wallColor }) {
+export async function consolidateRoom(apiKey, { roomName, bounds, detections, floor, wallColor, crops = [] }) {
   if (MOCK) return mockRoom(detections);
+  // a small labelled crop per sighting lets Claude see that "beige chair" and "stool" are the same object.
+  // The API takes at most 100 images per request; keep the most confident sightings.
+  const keep = [...crops].sort((a, b) => b.confidence - a.confidence).slice(0, 95);
+  const imgs = keep.flatMap(c => [
+    { type: "text", text: `Sighting ${c.id}:` },
+    { type: "image", source: { type: "base64", media_type: "image/jpeg", data: c.b64 } },
+  ]);
   const res = await create(apiKey, {
     model: MODEL, max_tokens: 16000,
     output_config: { effort: "medium", format: { type: "json_schema", schema: ROOM_SCHEMA } },
     system: ROOM_SYSTEM,
-    messages: [{ role: "user", content:
-      `Room: ${roomName}\nRoom bounds (m): ${JSON.stringify(bounds)}\nFloor notes: ${floor}\nWall color notes: ${wallColor}\n\nDetections:\n${JSON.stringify(detections)}` }],
+    messages: [{ role: "user", content: [
+      ...imgs,
+      { type: "text", text: `Room: ${roomName}\nRoom bounds (m): ${JSON.stringify(bounds)}\nFloor notes: ${floor}\nWall color notes: ${wallColor}\n\nDetections:\n${JSON.stringify(detections)}` },
+    ] }],
   });
   return JSON.parse(textOf(res));
 }

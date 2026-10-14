@@ -164,10 +164,22 @@ export function layoutRoom(room) {
     }
   }
 
-  // 6. push overlapping floor items apart (wall items slide along their wall only)
+  // 6a. furniture sharing a wall is packed as a row (pairwise pushing oscillates when one piece is squeezed between two)
+  for (const [key, w] of Object.entries(W)) {
+    const ax = w.along, lo = ax === "x" ? b.xmin : b.zmin, hi = ax === "x" ? b.xmax : b.zmax;
+    const row = P.filter(p => p.floor && p.wall === key).sort((a, c) => a[ax] - c[ax]);
+    for (let i = 1; i < row.length; i++) row[i][ax] = Math.max(row[i][ax], row[i - 1][ax] + (row[i - 1].w + row[i].w) / 2 + 0.02);
+    if (row.length && row.at(-1)[ax] > hi - row.at(-1).w / 2) {
+      row.at(-1)[ax] = hi - row.at(-1).w / 2;
+      for (let i = row.length - 2; i >= 0; i--) row[i][ax] = Math.min(row[i][ax], row[i + 1][ax] - (row[i + 1].w + row[i].w) / 2 - 0.02);
+    }
+    for (const p of row) p[ax] = clamp(p[ax], lo + p.w / 2, hi - p.w / 2); // a wall that's simply too full stays overlapped
+  }
+
+  // 6b. push remaining overlaps apart (wall items slide along their wall only)
   const floor = P.filter(p => p.floor && p.shape !== "rug");
   const ext = p => quarterOdd(p.rot) ? [p.d / 2, p.w / 2] : [p.w / 2, p.d / 2];
-  for (let iter = 0; iter < 30; iter++) {
+  for (let iter = 0; iter < 200; iter++) {
     let moved = false;
     for (let i = 0; i < floor.length; i++) for (let j = i + 1; j < floor.length; j++) {
       const a = floor[i], c = floor[j], [ax, az] = ext(a), [cx3, cz3] = ext(c);
@@ -176,11 +188,16 @@ export function layoutRoom(room) {
       moved = true;
       // move the lighter one (free items before wall items), along the axis it is allowed to move
       const [mv, st] = (a.wall && !c.wall) || (a.w * a.d > c.w * c.d && !(c.wall && !a.wall)) ? [c, a] : [a, c];
-      const canX = !mv.wall || W[mv.wall].along === "x", canZ = !mv.wall || W[mv.wall].along === "z";
-      if ((ox < oz && canX) || !canZ) mv.x += Math.sign(mv.x - st.x || 1) * (ox + 0.02);
-      else mv.z += Math.sign(mv.z - st.z || 1) * (oz + 0.02);
-      const [ex, ez] = ext(mv);
-      mv.x = clamp(mv.x, b.xmin + ex, b.xmax - ex); mv.z = clamp(mv.z, b.zmin + ez, b.zmax - ez);
+      const push = (m, o) => {
+        const canX = !m.wall || W[m.wall].along === "x", canZ = !m.wall || W[m.wall].along === "z";
+        const bx = m.x, bz = m.z;
+        if ((ox < oz && canX) || !canZ) m.x += Math.sign(m.x - o.x || 1) * (ox + 0.02);
+        else m.z += Math.sign(m.z - o.z || 1) * (oz + 0.02);
+        const [ex, ez] = ext(m);
+        m.x = clamp(m.x, b.xmin + ex, b.xmax - ex); m.z = clamp(m.z, b.zmin + ez, b.zmax - ez);
+        return Math.abs(m.x - bx) + Math.abs(m.z - bz) > 0.005;
+      };
+      if (!push(mv, st)) push(st, mv); // pinned in a corner → move the other one
     }
     if (!moved) break;
   }
