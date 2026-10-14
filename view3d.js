@@ -2,8 +2,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { buildModel } from "./models.js?v=7";
-import { layoutRoom, WALL_H } from "./layout.js?v=7";
+import { buildModel } from "./models.js?v=8";
+import { layoutRoom, snapDrag, WALL_H } from "./layout.js?v=8";
 
 const SMALL = new Set(["mouse", "keyboard", "headphones", "pillow"]);
 
@@ -56,6 +56,7 @@ export function createView(container, onPick) {
   controls.minDistance = 0.8; controls.maxDistance = 14;
 
   let roomGroup = null, walls = [], pickables = [], labels = [], selected = null;
+  let room = null, placed = [], byItem = new Map(), wallByKey = {}, moving = null;
 
   function resize() {
     const w = container.clientWidth, h = container.clientHeight;
@@ -88,9 +89,10 @@ export function createView(container, onPick) {
     });
   }
 
-  function setRoom(room) {
+  function setRoom(r, keepCamera = false) {
+    room = r;
     if (roomGroup) { scene.remove(roomGroup); dispose(roomGroup); }
-    roomGroup = new THREE.Group(); walls = []; pickables = []; labels = [];
+    roomGroup = new THREE.Group(); walls = []; pickables = []; labels = []; byItem = new Map();
     scene.add(roomGroup);
     if (!room) return;
 
@@ -124,14 +126,15 @@ export function createView(container, onPick) {
       g.position.set(x, 0, z); g.rotation.y = ry; g.userData.normal = new THREE.Vector3(n[0], 0, n[1]);
       roomGroup.add(g); walls.push(g);
     }
-    const wallByKey = { front: walls[0], back: walls[1], left: walls[2], right: walls[3] };
+    wallByKey = { front: walls[0], back: walls[1], left: walls[2], right: walls[3] };
 
     // shadow camera hugs the room
     sun.position.set(cx + M * 0.6, 5, cz + M * 0.9); sun.target.position.set(cx, 0, cz);
     Object.assign(sun.shadow.camera, { left: -M, right: M, top: M, bottom: -M, near: 0.5, far: 15 });
     sun.shadow.camera.updateProjectionMatrix();
 
-    for (const p of layoutRoom(room)) {
+    placed = layoutRoom(room);
+    for (const p of placed) {
       const model = buildModel(p.shape, p.w, p.h, p.d, hexOr(p.it.color, "#8b95a7"));
       model.position.set(p.x, p.y, p.z);
       model.rotation.y = p.rot;
@@ -145,7 +148,10 @@ export function createView(container, onPick) {
       tag.position.set(p.x, p.y + p.h + 0.12, p.z);
       tag.visible = !small; tag.userData = { item: p.it, small, model };
       roomGroup.add(tag); labels.push(tag);
+      byItem.set(p.it, { p, model, tag });
     }
+    if (selected) select(selected);
+    if (keepCamera) return;
 
     controls.target.set(cx, 0.5, cz);
     const k = 1 / Math.min(1, (container.clientWidth / container.clientHeight || 1) * 1.1);
@@ -164,12 +170,37 @@ export function createView(container, onPick) {
 
   const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
   let down = null;
-  renderer.domElement.addEventListener("pointerdown", e => { down = { x: e.clientX, y: e.clientY }; });
-  renderer.domElement.addEventListener("pointerup", e => {
-    if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) return;
+  const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hitPt = new THREE.Vector3();
+  function aim(e) {
     const r = renderer.domElement.getBoundingClientRect();
     ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ptr, camera);
+  }
+  function applyMove(q) {
+    const { model, tag, p } = byItem.get(moving.item);
+    model.position.set(q.x, q.y, q.z); model.rotation.y = q.rot;
+    tag.position.set(q.x, q.y + p.h + 0.12, q.z);
+    moving.q = q;
+  }
+  renderer.domElement.addEventListener("pointerdown", e => {
+    down = { x: e.clientX, y: e.clientY };
+    if (moving && e.isPrimary) { moving.drag = true; controls.enabled = false; }
+  });
+  renderer.domElement.addEventListener("pointermove", e => {
+    if (!moving?.drag) return;
+    aim(e);
+    if (!ray.ray.intersectPlane(floorPlane, hitPt)) return;
+    const { p } = byItem.get(moving.item);
+    applyMove(snapDrag(room, placed, { ...p, rot: moving.q?.rot ?? p.rot, y: moving.q?.y ?? p.y }, hitPt.x, hitPt.z));
+  });
+  renderer.domElement.addEventListener("pointerup", e => {
+    if (moving) {
+      if (moving.drag && moving.q) moving.onCommit(moving.q);
+      moving.drag = false; controls.enabled = true;
+      return;
+    }
+    if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) return;
+    aim(e);
     // raycasting ignores .visible, so skip things hung on currently-hidden walls
     const shown = o => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
     const hit = ray.intersectObjects(pickables, true).find(h => shown(h.object));
@@ -193,5 +224,20 @@ export function createView(container, onPick) {
     renderer.render(scene, camera);
   });
 
-  return { setRoom, select, resize };
+  // "fix layout": drag the item on the floor; one finger moves it, two fingers still zoom
+  function startMove(item, onCommit) {
+    if (!byItem.has(item)) return;
+    select(item);
+    moving = { item, onCommit, drag: false, q: null };
+    controls.enableRotate = false;
+  }
+  function stopMove() { moving = null; controls.enabled = true; controls.enableRotate = true; }
+  function rotateMoving() {
+    if (!moving) return;
+    const { p } = byItem.get(moving.item), cur = moving.q || p;
+    const q = { ...p, x: cur.x, z: cur.z, y: cur.y, wall: "", rot: (cur.rot || 0) + Math.PI / 2 };
+    applyMove(q); moving.onCommit(q);
+  }
+
+  return { setRoom, select, resize, startMove, stopMove, rotateMoving };
 }

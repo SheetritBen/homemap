@@ -1,5 +1,5 @@
-import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=7";
-import { createView } from "./view3d.js?v=7";
+import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=8";
+import { createView } from "./view3d.js?v=8";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -32,7 +32,8 @@ $("#btnSettings").onclick = () => go("settings");
 function busy(msg, sub = "") { $("#busy").classList.toggle("on", !!msg); $("#busyMsg").textContent = msg || ""; $("#busySub").textContent = sub; }
 
 // ---------- home ----------
-function roomTotal(r) { return r.items.reduce((s, i) => s + (+i.price || 0), 0); }
+const isStructure = it => it.category === "structure" || it.shape === "window" || it.shape === "door";
+function roomTotal(r) { return r.items.filter(i => !isStructure(i)).reduce((s, i) => s + (+i.price || 0), 0); }
 function renderHome() {
   $("#keyWarn").hidden = !!getKey() || MOCK;
   $("#roomList").innerHTML = db.rooms.length ? db.rooms.map(r => `
@@ -64,7 +65,7 @@ $("#btnTestKey").onclick = async () => {
 async function exportScans() {
   if (!db.rooms.length) return alert("Nothing to export yet.");
   const name = `homemap-export-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
-  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), build: 7, ua: navigator.userAgent, ...db }, null, 1)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), build: 8, ua: navigator.userAgent, ...db }, null, 1)], { type: "application/json" });
   const file = new File([blob], name, { type: "application/json" });
   try { if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: "HomeMap scan" }); }
   catch (e) { if (e.name === "AbortError") return; }
@@ -99,6 +100,7 @@ $("#btnStartScan").onclick = startScan;
 async function startScan() {
   if (!getKey() && !MOCK) return go("settings");
   scan = newScan($("#roomName").value.trim() || "Room");
+  scan.size = parseSize($("#roomSize").value);
   // iOS needs a user gesture for both camera and compass
   try {
     if (typeof DeviceOrientationEvent !== "undefined" && DeviceOrientationEvent.requestPermission) {
@@ -133,10 +135,19 @@ async function startScan() {
   scan.raf = requestAnimationFrame(tick);
 }
 
+// Heading of the back camera around the vertical axis, from the device's orientation angles.
+// Uses the gyro-fused relative frame, not the magnetic compass (electronics bend the compass by tens of degrees).
+function cameraHeading(a, b, g) {
+  const r = Math.PI / 180, ca = Math.cos(a * r), sa = Math.sin(a * r), sb = Math.sin(b * r), cg = Math.cos(g * r), sg = Math.sin(g * r);
+  const vx = -ca * sg - sa * sb * cg, vy = -sa * sg + ca * sb * cg;
+  return (Math.atan2(vx, vy) / r + 360) % 360;
+}
 function onOrient(e) {
   let h = null;
-  if (typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;
-  else if (e.absolute && e.alpha != null) h = 360 - e.alpha;
+  if (e.type === "deviceorientation" && !e.absolute && e.alpha != null && e.beta != null) h = cameraHeading(e.alpha, e.beta, e.gamma || 0);
+  else if (scan?.gyroless !== false && typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;
+  else if (scan?.gyroless !== false && e.absolute && e.alpha != null) h = 360 - e.alpha;
+  if (h != null && e.type === "deviceorientation" && !e.absolute && scan) scan.gyroless = false; // once gyro works, ignore the compass
   if (h == null || !scan) return;
   scan.hasCompass = true;
   if (scan.h0 == null) scan.h0 = h;
@@ -377,7 +388,12 @@ async function finishScan() {
   if (!s.detections.length) { busy(); alert("No items were recognized. Check your API key and try again."); endScan(); go("home"); return; }
 
   busy("Building your room…", `Merging ${s.detections.length} sightings into one catalog`);
-  const bounds = fitBounds(s.walls, s.detections);
+  let bounds = fitBounds(s.walls, s.detections);
+  if (s.size) { // user told us the real size: stretch the scan to match before merging
+    const fx = s.size[0] / (bounds.xmax - bounds.xmin), fz = s.size[1] / (bounds.zmax - bounds.zmin);
+    bounds = { xmin: bounds.xmin * fx, xmax: bounds.xmax * fx, zmin: bounds.zmin * fz, zmax: bounds.zmax * fz };
+    for (const d of s.detections) { d.x = +(d.x * fx).toFixed(2); d.z = +(d.z * fz).toFixed(2); }
+  }
   Object.keys(bounds).forEach(k => bounds[k] = +bounds[k].toFixed(2));
   let out;
   // photos are already analysed — on failure offer a retry instead of losing the scan
@@ -413,7 +429,7 @@ async function finishScan() {
   });
 
   const existing = db.rooms.find(r => r.name.toLowerCase() === s.roomName.toLowerCase());
-  const room = { id: existing?.id || uid(), name: s.roomName, scannedAt: Date.now(), cost: spend.usd, bounds, floor: out.floor, wallColor: out.wall_color, items,
+  const room = { id: existing?.id || uid(), name: s.roomName, scannedAt: Date.now(), cost: spend.usd, bounds, size: s.size || null, floor: out.floor, wallColor: out.wall_color, items,
     // raw scan data kept for tuning map accuracy (small: text only)
     raw: { frames: s.frames.length, walls: s.walls.map(w => ({ angle: Math.round(w.angle), dist: +w.dist.toFixed(2) })),
       detections: s.detections.map(({ bbox, ...d }) => d) } };
@@ -475,29 +491,95 @@ function chipsHtml(selected, withAll) {
   return opts.map(r => `<button class="chip ${r.id === selected ? "on" : ""}" data-room="${r.id}">${esc(r.name)}</button>`).join("");
 }
 
-function render3d() {
+function render3d(keepCamera = false) {
   if (!view3d) view3d = createView($("#stage"), it => openSheet(it));
   if (!db.rooms.find(r => r.id === current3dRoom)) current3dRoom = db.rooms.at(-1)?.id;
-  $("#roomChips3d").innerHTML = db.rooms.length ? chipsHtml(current3dRoom, false) : `<span class="muted small">Scan a room to see it in 3D.</span>`;
-  view3d.setRoom(db.rooms.find(r => r.id === current3dRoom));
+  $("#roomChips3d").innerHTML = db.rooms.length ? chipsHtml(current3dRoom, false)
+    + `<button class="chip" id="btnRoomSize">Room size</button><button class="chip" id="btnAddOpening">+ Window / door</button>`
+    : `<span class="muted small">Scan a room to see it in 3D.</span>`;
+  view3d.setRoom(db.rooms.find(r => r.id === current3dRoom), keepCamera);
   requestAnimationFrame(() => view3d.resize());
 }
-$("#roomChips3d").addEventListener("click", e => { const b = e.target.closest("[data-room]"); if (b) { current3dRoom = b.dataset.room; render3d(); } });
+$("#roomChips3d").addEventListener("click", e => {
+  const room = db.rooms.find(r => r.id === current3dRoom);
+  if (e.target.id === "btnRoomSize" && room) return askRoomSize(room);
+  if (e.target.id === "btnAddOpening" && room) return addOpening(room);
+  const b = e.target.closest("[data-room]"); if (b) { stopMove(); current3dRoom = b.dataset.room; render3d(); }
+});
+
+// "3 x 3", "3.2×2.8", "3 3" → [w, d] in meters
+function parseSize(s) {
+  const m = String(s || "").replace(",", ".").match(/(\d+(?:\.\d+)?)\s*(?:[x×*\s]\s*(\d+(?:\.\d+)?))?/i);
+  if (!m) return null;
+  const w = +m[1], d = +(m[2] || m[1]);
+  return w > 0.5 && w < 20 && d > 0.5 && d < 20 ? [w, d] : null;
+}
+// stretch the scanned room (and everything in it) to the real size, keeping the scan spot as origin
+function rescaleRoom(room, [W, D]) {
+  const b = room.bounds, fx = W / (b.xmax - b.xmin), fz = D / (b.zmax - b.zmin);
+  room.bounds = { xmin: b.xmin * fx, xmax: b.xmax * fx, zmin: b.zmin * fz, zmax: b.zmax * fz };
+  for (const it of room.items) {
+    it.x *= fx; it.z *= fz;
+    if (it.manual) { it.manual.x *= fx; it.manual.z *= fz; }
+  }
+  room.size = [W, D];
+}
+function askRoomSize(room) {
+  const b = room.bounds, cur = `${(b.xmax - b.xmin).toFixed(1)} × ${(b.zmax - b.zmin).toFixed(1)}`;
+  const v = prompt(`Real room size in meters, width × depth (width = left-to-right when facing the wall you started at).\nScan thinks: ${cur}`, room.size ? room.size.join(" × ") : cur);
+  if (v == null) return;
+  const sz = parseSize(v); if (!sz) return alert("Use a format like 3 × 3");
+  rescaleRoom(room, sz); save(); render3d();
+}
+function addOpening(room) {
+  const kind = prompt("Add a window or a door? (type window or door)", "window");
+  if (!kind || !/^(window|door)$/i.test(kind.trim())) return;
+  const door = /door/i.test(kind);
+  const it = { id: uid(), name: door ? "Door" : "Window", category: "structure", shape: door ? "door" : "window",
+    color: door ? "#b08b62" : "#f4f3ef", description: "Added by hand", w: door ? 0.9 : 1.2, d: 0.06, h: door ? 2.05 : 1.1,
+    x: 0, z: 0, price: 0, store: "", priceSource: "manual", mount: "wall", elev: door ? 0 : 0.9, small: false, thumb: "" };
+  room.items.push(it); save(); render3d(true);
+  startMove(it);
+}
+
+// ---------- fix-layout mode ----------
+let movingItem = null;
+function startMove(it) {
+  const room = findRoomOf(it); if (!room) return;
+  if (!$("#view3d").classList.contains("active")) { current3dRoom = room.id; go("view3d"); }
+  closeSheet(true);
+  movingItem = it;
+  $("#editName").textContent = it.name;
+  $("#editBar").hidden = false;
+  view3d.startMove(it, q => {
+    it.manual = { x: +q.x.toFixed(3), z: +q.z.toFixed(3), y: +(q.y || 0).toFixed(3), rot: +q.rot.toFixed(4), wall: q.wall || "" };
+    save();
+  });
+}
+function stopMove() {
+  if (!movingItem) return;
+  movingItem = null; $("#editBar").hidden = true;
+  view3d?.stopMove(); render3d(true);
+}
+$("#editRotate").onclick = () => view3d.rotateMoving();
+$("#editAuto").onclick = () => { if (movingItem) { delete movingItem.manual; save(); const it = movingItem; stopMove(); startMove(it); } };
+$("#editDone").onclick = stopMove;
 
 function priceTag(it) {
   if (it.priceSource === "manual") return `<span class="tag ok">your price</span>`;
   return `<span class="tag">AI estimate</span>`;
 }
 
-// scans before build 7 have no small_item flag: treat cheap accessories as small
-const isSmall = it => it.small ?? (+it.price || 0) < 100;
+// scans before build 8 have no small_item flag: treat cheap accessories as small
+const isSmall = it => !isStructure(it) && (it.small ?? (+it.price || 0) < 100);
+const isMain = it => !isStructure(it) && !isSmall(it);
 function itemRows(r, items) {
   return [...items].sort((a, b) => (b.price || 0) - (a.price || 0)).map(it => `
       <div class="item" data-room="${r.id}" data-item="${it.id}">
         ${it.thumb ? `<img src="${it.thumb}" alt="">` : `<div class="thumb-ph"></div>`}
         <div class="meta"><div class="name">${esc(it.name)}</div>
           <div class="muted small">${esc([it.brand, it.store].filter(Boolean).join(" · ") || it.category)}</div>${priceTag(it)}</div>
-        <div class="price">${ils(it.price)}</div>
+        <div class="price">${isStructure(it) ? "" : ils(it.price)}</div>
       </div>`).join("");
 }
 
@@ -507,9 +589,11 @@ function renderCatalog() {
   if (!rooms.length) { $("#catalogList").innerHTML = `<p class="muted small" style="text-align:center">Nothing cataloged yet.</p>`; return; }
   $("#catalogList").innerHTML = rooms.map(r => `
     ${currentCatRoom === "all" ? `<h3 style="margin:14px 2px 8px">${esc(r.name)}</h3>` : ""}
-    ${itemRows(r, r.items.filter(i => !isSmall(i)))}
+    ${itemRows(r, r.items.filter(isMain))}
     ${r.items.some(isSmall) ? `<details class="small-group"><summary>Small items (${r.items.filter(isSmall).length}) · ${ils(r.items.filter(isSmall).reduce((s, i) => s + (+i.price || 0), 0))}</summary>
       ${itemRows(r, r.items.filter(isSmall))}</details>` : ""}
+    ${r.items.some(isStructure) ? `<details class="small-group"><summary>Room features (${r.items.filter(isStructure).length}) · windows, doors</summary>
+      ${itemRows(r, r.items.filter(isStructure))}</details>` : ""}
     <div class="total"><span>${esc(r.name)} total</span><span>${ils(roomTotal(r))}</span></div>`).join("");
 }
 $("#roomChips").addEventListener("click", e => { const b = e.target.closest("[data-room]"); if (b) { currentCatRoom = b.dataset.room; renderCatalog(); } });
@@ -550,6 +634,7 @@ function openSheet(it) {
     </div>
     <div style="display:flex;gap:8px;margin-top:16px">
       <button id="sheetClose" class="primary" style="flex:1">Done</button>
+      <button id="sheetMove">Move</button>
       <button id="sheetDel">Delete</button>
     </div>`;
   $("#sheet").querySelectorAll("input[data-f]").forEach(inp => inp.onchange = () => {
@@ -557,7 +642,8 @@ function openSheet(it) {
     if (f === "price") { it.price = +inp.value || 0; it.priceSource = "manual"; } else it[f] = inp.value;
     save();
   });
-  $("#sheetClose").onclick = closeSheet;
+  $("#sheetClose").onclick = () => closeSheet();
+  $("#sheetMove").onclick = () => startMove(it);
   if ($("#sheetLens")) $("#sheetLens").onclick = () => shareToLens(it);
   $("#sheetDel").onclick = () => {
     if (!confirm(`Remove ${it.name}?`)) return;
@@ -583,11 +669,12 @@ async function shareToLens(it) {
   window.open(`https://lens.google.com/`, "_blank");
 }
 
-function closeSheet() {
+function closeSheet(keepSelection = false) {
   $("#sheet").classList.remove("on"); $("#sheetBack").classList.remove("on");
-  view3d?.select(null); refreshVisible();
+  if (!keepSelection) view3d?.select(null);
+  refreshVisible();
 }
-$("#sheetBack").onclick = closeSheet;
+$("#sheetBack").onclick = () => closeSheet();
 
 // resume any price checks interrupted by a reload
 go("home");

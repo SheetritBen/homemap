@@ -213,6 +213,20 @@ const B = {
       cup.rotation.z = Math.PI / 2;
     }
   },
+  window(g, w, h, d, c) {
+    const frame = mat("#f4f3ef", { roughness: 0.5 }), t = 0.05;
+    for (const sy of [0, h - t]) box(g, w, t, 0.07, frame, 0, sy, 0);
+    for (const sx of [-1, 1]) box(g, t, h, 0.07, frame, sx * (w / 2 - t / 2), 0, 0);
+    box(g, 0.03, h, 0.05, frame, 0, 0, 0); // mullion
+    const glass = part(new THREE.PlaneGeometry(w - 2 * t, h - 2 * t),
+      new THREE.MeshStandardMaterial({ color: "#bcd9ef", emissive: "#9cc6e8", emissiveIntensity: 0.35, transparent: true, opacity: 0.55, roughness: 0.05 }));
+    glass.position.set(0, h / 2, 0.036);
+    g.add(glass);
+  },
+  door(g, w, h, d, c) {
+    box(g, w, h, 0.05, mat(c === "#8b95a7" ? "#b08b62" : c, { roughness: 0.6 }), 0, 0, 0, 0.004);
+    box(g, 0.12, 0.02, 0.05, mat("#9aa0a6", { metalness: 0.7, roughness: 0.3 }), w / 2 - 0.12, h * 0.48, 0.04);
+  },
   textile(g, w, h, d, c) { box(g, w, Math.max(h, 0.03), d, mat(c, { roughness: 1 }), 0, 0, 0, 0.012); },
   box(g, w, h, d, c) { box(g, w, h, d, mat(c), 0, 0, 0, Math.min(w, h, d) * 0.12); },
 };

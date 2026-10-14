@@ -57,7 +57,7 @@ const num = { type: "number" }, str = { type: "string" };
 const enm = values => ({ type: "string", enum: values });
 const bool = { type: "boolean" };
 export const SHAPE_LIST = ["sofa", "armchair", "chair", "office_chair", "desk", "table", "monitor", "tv", "laptop", "keyboard", "mouse",
-  "wardrobe", "shelf", "dresser", "bed", "ac", "wall_art", "printer3d", "bag", "pillow", "textile", "deskmat", "lamp", "plant", "rug", "headphones", "box"];
+  "wardrobe", "shelf", "dresser", "bed", "ac", "wall_art", "printer3d", "bag", "pillow", "textile", "deskmat", "window", "door", "lamp", "plant", "rug", "headphones", "box"];
 const obj = (props) => ({ type: "object", additionalProperties: false, properties: props, required: Object.keys(props) });
 
 const FRAME_SCHEMA = obj({
@@ -75,7 +75,7 @@ const FRAME_SCHEMA = obj({
 
 const FRAME_SYSTEM = `You catalog the contents of a home for an insurance-grade inventory. The user is standing roughly in the middle of a room in Israel, holding a phone camera, turning in a circle. You see one frame.
 
-List every distinct physical item worth cataloging: furniture, electronics, appliances (including wall-mounted AC units), lighting, tools, 3D printers, bags, pillows/cushions, rugs, decor, storage (closets, shelves). Skip structural parts (doors, windows, outlets) and tiny clutter (pens, cables, papers).
+List every distinct physical item worth cataloging: furniture, electronics, appliances (including wall-mounted AC units), lighting, tools, 3D printers, bags, pillows/cushions, rugs, decor, storage (closets, shelves). Skip outlets, switches and tiny clutter (pens, cables, papers). DO list windows and doors (category "structure"): they have no resale value but are part of the room's layout; for a window, elevation_m is the sill height.
 List pillows and cushions lying on sofas, beds and chairs as their own items. Include items that are only partly in frame or partly hidden behind other things.
 
 For each item:
@@ -135,6 +135,7 @@ For each item:
 - shape: the closest 3D model type from the list (a 3D printer = printer3d, a closet = wardrobe, a poster or framed picture = wall_art, a backpack or duffel = bag, anything else without a match = box).
 - against_wall: which wall the item's back is against — front = the wall at negative z (the user faced it first), back = positive z, left = negative x, right = positive x — or "none" if it stands free. Sofas, wardrobes, desks and beds are almost always against a wall; wall-mounted items name the wall they hang on.
 - mount / elevation_m: merged from the detections (bottom height above the floor in meters).
+- Windows and doors: category "structure", shape window/door, est_price_ils 0, likely_store "", mount "wall", against_wall = the wall they're in.
 - small_item: true for small accessories and clutter (remotes, phone stands, desk mats, chargers, small decor). Valuables like watches, headphones, cameras are NOT small items.
 - likely_store: the Israeli retailer this would most likely be bought from, e.g. IKEA Israel, ACE, Home Center, KSP, Ivory, Bug, Zap, Golf & Co, Fox Home, Hamashbir, Shufersal Online, AliExpress, Amazon (shipped to Israel), or the brand's Israeli importer.`;
 

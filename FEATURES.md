@@ -24,3 +24,7 @@
 - [ ] Room merge sees a labelled photo crop of every sighting (visual dedupe); told distances are unreliable, angles reliable; multi-panel art / sofa bed / one laptop counted once
 - [ ] Furniture along the same wall is packed as a row (no piece squeezed inside another)
 - [ ] Walking during a scan → "Stay on one spot" warning and auto-capture pauses
+- [ ] Heading from gyro (deviceorientation alpha/beta/gamma → camera yaw), compass only as fallback
+- [ ] Optional room size (e.g. "3 × 3") before a scan stretches positions to the real size; "Room size" chip in 3D rescales an existing room
+- [ ] Windows/doors detected as structure (no price, not in totals, "Room features" group); "+ Window / door" adds one by hand
+- [ ] Fix layout: item card → Move → drag on floor (snaps to walls / onto furniture), Rotate 90°, Auto place resets; saved as it.manual and respected by layout

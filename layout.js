@@ -4,6 +4,7 @@
 export const WALL_H = 2.6;
 
 const RULES = [ // order matters: first match wins
+  [/window/, "window"], [/door|doorway/, "door"],
   [/pillow|cushion/, "pillow"], [/desk ?mat|mouse ?pad/, "deskmat"], [/\b(rug|carpet|mat)\b/, "rug"], [/lamp/, "lamp"],
   [/riser|stand riser/, "box"], [/3d printer|3-d printer|printer 3d/, "printer3d"],
   [/office chair|desk chair|gaming chair|task chair/, "office_chair"],
@@ -24,7 +25,8 @@ export function guessShape(it) {
 }
 
 const AGAINST_WALL = new Set(["sofa", "wardrobe", "shelf", "dresser", "bed", "desk", "printer3d", "table"]);
-const WALL_MOUNT = new Set(["ac", "wall_art"]);
+const WALL_MOUNT = new Set(["ac", "wall_art", "window", "door"]);
+export const STRUCTURE = new Set(["window", "door"]);
 const ON_SURFACE = new Set(["monitor", "laptop", "keyboard", "mouse", "headphones", "lamp", "deskmat"]);
 const SURFACE = new Set(["desk", "table", "dresser", "shelf", "wardrobe"]);
 const SOFT = new Set(["pillow", "textile"]); // go on seats, handled after chairs are placed
@@ -69,6 +71,13 @@ export function layoutRoom(room) {
     x: clamp(+it.x || 0, b.xmin, b.xmax), z: clamp(+it.z || 0, b.zmin, b.zmax), y: 0, rot: 0,
     mount: it.mount || "", elev: +it.elev || 0, wallHint: it.wall && it.wall !== "none" ? it.wall : "",
   }));
+  // positions the user fixed by hand win over everything
+  for (const p of P) {
+    const m = p.it.manual;
+    if (!m) continue;
+    Object.assign(p, { x: m.x, z: m.z, y: m.y || 0, rot: m.rot || 0, wall: m.wall || "", fixed: true, manual: true });
+    if (!m.wall && (m.y || 0) < 0.05) p.floor = true;
+  }
   for (const p of P) {
     if (p.shape === "rug") p.mount = "floor";
     // small odds and ends (and draped textiles) never render bigger than a shoebox
@@ -77,15 +86,16 @@ export function layoutRoom(room) {
 
   // 1. wall-mounted things
   for (const p of P) {
-    if (!(WALL_MOUNT.has(p.shape) || p.mount === "wall")) continue;
+    if (p.fixed || !(WALL_MOUNT.has(p.shape) || p.mount === "wall")) continue;
     if (p.mount === "on_furniture" || (p.shape === "wall_art" && p.elev > 0 && p.elev < 1.1 && p.h < 0.4)) continue; // standing photo frame
     placeOnWall(W, b, p, p.wallHint || nearestWall(W, p)[0], 0.01);
-    p.y = p.elev > 0.3 ? p.elev : p.shape === "ac" ? WALL_H - 0.3 - p.h : clamp(1.55 - p.h / 2, 0.3, WALL_H - p.h - 0.1);
+    p.y = p.shape === "door" ? 0 : p.elev > 0.3 ? p.elev : p.shape === "ac" ? WALL_H - 0.3 - p.h
+      : p.shape === "window" ? 0.9 : clamp(1.55 - p.h / 2, 0.3, WALL_H - p.h - 0.1);
     p.fixed = true;
   }
   // 2. big floor furniture against walls
   for (const p of P) {
-    if (p.fixed || !AGAINST_WALL.has(p.shape) || p.mount === "on_furniture") continue;
+    if (p.fixed || p.floor || !AGAINST_WALL.has(p.shape) || p.mount === "on_furniture") continue;
     const [k, dist] = nearestWall(W, p);
     const key = p.wallHint || (dist < (p.shape === "desk" ? 1.0 : 1.3) ? k : "");
     if (key) placeOnWall(W, b, p, key); else p.rot = snap90(Math.atan2(cx - p.x, cz - p.z));
@@ -168,7 +178,7 @@ export function layoutRoom(room) {
   // 6a. furniture sharing a wall is packed as a row (pairwise pushing oscillates when one piece is squeezed between two)
   for (const [key, w] of Object.entries(W)) {
     const ax = w.along, lo = ax === "x" ? b.xmin : b.zmin, hi = ax === "x" ? b.xmax : b.zmax;
-    const row = P.filter(p => p.floor && p.wall === key).sort((a, c) => a[ax] - c[ax]);
+    const row = P.filter(p => p.floor && p.wall === key && !p.manual).sort((a, c) => a[ax] - c[ax]);
     for (let i = 1; i < row.length; i++) row[i][ax] = Math.max(row[i][ax], row[i - 1][ax] + (row[i - 1].w + row[i].w) / 2 + 0.02);
     if (row.length && row.at(-1)[ax] > hi - row.at(-1).w / 2) {
       row.at(-1)[ax] = hi - row.at(-1).w / 2;
@@ -188,7 +198,8 @@ export function layoutRoom(room) {
       if (ox <= 0.01 || oz <= 0.01) continue;
       moved = true;
       // move the lighter one (free items before wall items), along the axis it is allowed to move
-      const [mv, st] = (a.wall && !c.wall) || (a.w * a.d > c.w * c.d && !(c.wall && !a.wall)) ? [c, a] : [a, c];
+      if (a.manual && c.manual) continue;
+      const [mv, st] = c.manual ? [a, c] : a.manual ? [c, a] : (a.wall && !c.wall) || (a.w * a.d > c.w * c.d && !(c.wall && !a.wall)) ? [c, a] : [a, c];
       const push = (m, o) => {
         const canX = !m.wall || W[m.wall].along === "x", canZ = !m.wall || W[m.wall].along === "z";
         const bx = m.x, bz = m.z;
@@ -198,16 +209,42 @@ export function layoutRoom(room) {
         m.x = clamp(m.x, b.xmin + ex, b.xmax - ex); m.z = clamp(m.z, b.zmin + ez, b.zmax - ez);
         return Math.abs(m.x - bx) + Math.abs(m.z - bz) > 0.005;
       };
-      if (!push(mv, st)) push(st, mv); // pinned in a corner → move the other one
+      if (!push(mv, st) && !st.manual) push(st, mv); // pinned in a corner → move the other one
     }
     if (!moved) break;
   }
   // things resting on furniture follow it if the overlap pass moved it
   for (const p of P) {
+    if (p.manual) continue;
     const base = p.on || p.pillowOn;
     if (!base || !p.local) continue;
     [p.x, p.z] = toWorld(base, p.local[0], p.local[1]);
     p.rot = base.rot;
   }
   return P;
+}
+
+// Snap a hand-dragged item: wall things hang on the nearest wall, big furniture goes flush when
+// dropped near a wall, small things land on whatever furniture they're dropped on.
+export function snapDrag(room, placed, p, x, z) {
+  const b = room.bounds, W = walls(b);
+  const q = { ...p, x: clamp(x, b.xmin, b.xmax), z: clamp(z, b.zmin, b.zmax), wall: "", y: 0, on: null };
+  if (WALL_MOUNT.has(p.shape) || (p.wall && !p.floor && !p.on)) {
+    placeOnWall(W, b, q, nearestWall(W, q)[0], 0.01);
+    q.y = p.y;
+    return q;
+  }
+  if (AGAINST_WALL.has(p.shape) || SEATS.has(p.shape) || p.shape === "sofa") {
+    const [k, dist] = nearestWall(W, q);
+    q.rot = p.rot;
+    if (AGAINST_WALL.has(p.shape) && dist < 0.5 + p.d / 2) placeOnWall(W, b, q, k);
+    return q;
+  }
+  // smaller things: on top of furniture under the finger, else the floor
+  const under = placed.filter(s => s !== p && (SURFACE.has(s.shape) || ["sofa", "bed", "chair", "armchair", "office_chair"].includes(s.shape)))
+    .find(s => { const [lx, lz] = toLocal(s, q.x, q.z); return Math.abs(lx) < s.w / 2 && Math.abs(lz) < s.d / 2; });
+  q.rot = under ? under.rot : p.rot;
+  q.y = under ? under.y + (["sofa", "chair", "armchair", "office_chair"].includes(under.shape) ? Math.min(0.48, under.h * 0.5) : under.h) : 0;
+  q.on = under || null;
+  return q;
 }

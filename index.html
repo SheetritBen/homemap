@@ -80,6 +80,9 @@
   #view3d { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
   #stage { flex: 1; position: relative; touch-action: none; }
   #stage canvas { display: block; width: 100%; height: 100%; }
+  .edit-bar { position: absolute; left: 12px; right: 12px; bottom: 12px; background: #0e1116e6; border: 1px solid var(--line);
+    border-radius: 14px; padding: 10px 12px; }
+  .edit-bar[hidden] { display: none; }
   .stage-hint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: #0e1116cc;
     padding: 6px 12px; border-radius: 999px; font-size: 13px; color: var(--muted); pointer-events: none; white-space: nowrap; }
 
@@ -139,9 +142,10 @@
       <b>Scan a room</b>
       <p class="muted small">Stand in the middle of the room and <b>stay on that spot</b>. Face the door, then turn slowly in place for a full circle. Pause when it says "Hold still". The map fills in as you go.</p>
       <input id="roomName" placeholder="Room name" value="Office" style="margin-bottom:10px">
+      <input id="roomSize" placeholder="Room size, optional (e.g. 3 × 3 m)" inputmode="text" style="margin-bottom:10px">
       <button class="primary" id="btnStartScan" style="width:100%">Start scan</button>
       <button id="btnUpload" style="width:100%;margin-top:8px">Or upload room photos</button>
-      <p class="muted small" style="text-align:center;margin:10px 0 0">build 7</p>
+      <p class="muted small" style="text-align:center;margin:10px 0 0">build 8</p>
       <input type="file" id="fileUpload" accept="image/*" multiple hidden>
     </div>
     <div id="roomList"></div>
@@ -170,7 +174,15 @@
 <!-- 3D -->
 <section class="screen" id="view3d">
   <div class="chips" id="roomChips3d"></div>
-  <div id="stage"><div class="stage-hint">Drag to orbit · pinch to zoom · tap an item</div></div>
+  <div id="stage"><div class="stage-hint">Drag to orbit · pinch to zoom · tap an item</div>
+    <div class="edit-bar" id="editBar" hidden>
+      <div class="small"><b id="editName"></b><span class="muted"> · drag it to where it belongs</span></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="editRotate">Rotate 90°</button><button id="editAuto">Auto place</button>
+        <button id="editDone" class="primary" style="flex:1">Done</button>
+      </div>
+    </div>
+  </div>
 </section>
 
 <!-- CATALOG -->
@@ -196,7 +208,7 @@
     </div>
     <div class="card">
       <b>Data</b>
-      <p class="muted small">Everything lives on this phone. Build 7.</p>
+      <p class="muted small">Everything lives on this phone. Build 8.</p>
       <button id="btnExport2" style="margin-bottom:8px">Export scans</button><br>
       <button id="btnWipe">Delete all rooms</button>
     </div>
@@ -214,6 +226,6 @@
 
 <div class="busy" id="busy"><div class="spinner"></div><div id="busyMsg">Working…</div><div class="muted small" id="busySub"></div></div>
 
-<script type="module" src="app.js?v=7"></script>
+<script type="module" src="app.js?v=8"></script>
 </body>
 </html>
