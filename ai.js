@@ -54,6 +54,10 @@ export async function testKey(apiKey) {
 // ---------- per-frame detection ----------
 
 const num = { type: "number" }, str = { type: "string" };
+const enm = values => ({ type: "string", enum: values });
+const bool = { type: "boolean" };
+export const SHAPE_LIST = ["sofa", "armchair", "chair", "office_chair", "desk", "table", "monitor", "tv", "laptop", "keyboard", "mouse",
+  "wardrobe", "shelf", "dresser", "bed", "ac", "wall_art", "printer3d", "bag", "pillow", "textile", "deskmat", "lamp", "plant", "rug", "headphones", "box"];
 const obj = (props) => ({ type: "object", additionalProperties: false, properties: props, required: Object.keys(props) });
 
 const FRAME_SCHEMA = obj({
@@ -65,12 +69,14 @@ const FRAME_SCHEMA = obj({
     name: str, category: str, brand: str, model: str, color_hex: str, description: str,
     x_center: num, bbox: obj({ x0: num, y0: num, x1: num, y1: num }),
     distance_m: num, width_m: num, depth_m: num, height_m: num, confidence: num,
+    mount: enm(["floor", "wall", "on_furniture"]), elevation_m: num, resting_on: str,
   }) },
 });
 
 const FRAME_SYSTEM = `You catalog the contents of a home for an insurance-grade inventory. The user is standing roughly in the middle of a room in Israel, holding a phone camera, turning in a circle. You see one frame.
 
 List every distinct physical item worth cataloging: furniture, electronics, appliances (including wall-mounted AC units), lighting, tools, 3D printers, bags, pillows/cushions, rugs, decor, storage (closets, shelves). Skip structural parts (doors, windows, outlets) and tiny clutter (pens, cables, papers).
+List pillows and cushions lying on sofas, beds and chairs as their own items. Include items that are only partly in frame or partly hidden behind other things.
 
 For each item:
 - name: specific and short ("27-inch monitor", "office chair", "3D printer", "2-seat sofa").
@@ -81,6 +87,9 @@ For each item:
 - distance_m: estimated horizontal distance from the camera to the item's center, in meters.
 - width_m / depth_m / height_m: real-world size estimate in meters.
 - confidence: 0-1.
+- mount: "floor" (stands on the floor), "wall" (hung or mounted on a wall), or "on_furniture" (resting on a desk, shelf, cabinet top, sofa...).
+- elevation_m: height of the item's BOTTOM above the floor (0 for floor items; desk items about 0.75; a bag on top of a 2 m wardrobe = 2.0).
+- resting_on: what it sits on ("desk", "sofa", "wardrobe top") or "".
 
 Also estimate the horizontal distance in meters from the camera to the wall (where it meets the floor) at the left edge, center, and right edge of the frame. Use -1 when a wall isn't visible there. Use typical room sizes as a sanity check: a small home office is about 2.5-3.5 m across. Describe the floor type and wall color briefly.`;
 
@@ -106,6 +115,8 @@ const ROOM_SCHEMA = obj({
     source_id: str, name: str, brand: str, model: str, category: str, color_hex: str, description: str,
     x: num, z: num, width_m: num, depth_m: num, height_m: num,
     est_price_ils: num, price_low_ils: num, price_high_ils: num, likely_store: str, confidence: num,
+    shape: enm(SHAPE_LIST), against_wall: enm(["front", "back", "left", "right", "none"]),
+    mount: enm(["floor", "wall", "on_furniture"]), elevation_m: num, small_item: bool,
   }) },
 });
 
@@ -119,6 +130,10 @@ For each item:
 - source_id: the id of the single best detection to use as the photo (largest, clearest view).
 - name, brand, model, category, color_hex, description: best merged values. Keep brand/model "" if unknown.
 - est_price_ils: realistic current replacement price in Israel in shekels incl. VAT, for this kind of product at the quality level shown. price_low_ils / price_high_ils give the plausible range.
+- shape: the closest 3D model type from the list (a 3D printer = printer3d, a closet = wardrobe, a poster or framed picture = wall_art, a backpack or duffel = bag, anything else without a match = box).
+- against_wall: which wall the item's back is against — front = the wall at negative z (the user faced it first), back = positive z, left = negative x, right = positive x — or "none" if it stands free. Sofas, wardrobes, desks and beds are almost always against a wall; wall-mounted items name the wall they hang on.
+- mount / elevation_m: merged from the detections (bottom height above the floor in meters).
+- small_item: true for small accessories and clutter (remotes, phone stands, desk mats, chargers, small decor). Valuables like watches, headphones, cameras are NOT small items.
 - likely_store: the Israeli retailer this would most likely be bought from, e.g. IKEA Israel, ACE, Home Center, KSP, Ivory, Bug, Zap, Golf & Co, Fox Home, Hamashbir, Shufersal Online, AliExpress, Amazon (shipped to Israel), or the brand's Israeli importer.`;
 
 export async function consolidateRoom(apiKey, { roomName, bounds, detections, floor, wallColor }) {

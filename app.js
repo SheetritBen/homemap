@@ -1,5 +1,5 @@
-import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=4";
-import { createView } from "./view3d.js?v=4";
+import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js?v=5";
+import { createView } from "./view3d.js?v=5";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -64,7 +64,7 @@ $("#btnTestKey").onclick = async () => {
 async function exportScans() {
   if (!db.rooms.length) return alert("Nothing to export yet.");
   const name = `homemap-export-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
-  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), build: 4, ua: navigator.userAgent, ...db }, null, 1)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), build: 5, ua: navigator.userAgent, ...db }, null, 1)], { type: "application/json" });
   const file = new File([blob], name, { type: "application/json" });
   try { if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: "HomeMap scan" }); }
   catch (e) { if (e.name === "AbortError") return; }
@@ -89,7 +89,7 @@ function newScan(roomName) {
     roomName, frames: [], sectors: Array(SECTORS).fill(0), // 0 none, 1 analysing, 2 done
     walls: [], detections: [], floor: [], wallColor: [],
     heading: null, h0: null, hist: [], lastCapture: 0, inflight: 0, queue: [], finishing: false,
-    stream: null, raf: 0, hasCompass: false,
+    stream: null, raf: 0, hasCompass: false, motion: [], lens: "wide", holding: false,
   };
 }
 const angDiff = (a, b) => ((a - b + 540) % 360) - 180;
@@ -104,12 +104,27 @@ async function startScan() {
     if (typeof DeviceOrientationEvent !== "undefined" && DeviceOrientationEvent.requestPermission) {
       await DeviceOrientationEvent.requestPermission();
     }
+    if (typeof DeviceMotionEvent !== "undefined" && DeviceMotionEvent.requestPermission) {
+      await DeviceMotionEvent.requestPermission();
+    }
   } catch { /* falls back to manual capture */ }
   window.addEventListener("deviceorientation", onOrient);
   window.addEventListener("deviceorientationabsolute", onOrient);
+  window.addEventListener("devicemotion", onMotion);
   try {
-    scan.stream = await navigator.mediaDevices.getUserMedia({ audio: false,
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1440 } } });
+    const size = { width: { ideal: 1920 }, height: { ideal: 1440 } };
+    scan.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, ...size } });
+    // prefer the 0.5x ultra-wide lens: sees floor-to-ceiling and whole pieces of furniture.
+    // Device labels only appear after permission is granted, hence the second request.
+    const ultra = (await navigator.mediaDevices.enumerateDevices())
+      .find(d => d.kind === "videoinput" && /ultra/i.test(d.label) && !/front/i.test(d.label));
+    if (ultra) {
+      try {
+        const s2 = await navigator.mediaDevices.getUserMedia({ audio: false, video: { deviceId: { exact: ultra.deviceId }, ...size } });
+        scan.stream.getTracks().forEach(t => t.stop());
+        scan.stream = s2; scan.lens = "ultra";
+      } catch (e) { console.warn("ultra-wide unavailable", e); }
+    }
   } catch (e) { alert("Camera unavailable: " + e.message); return; }
   const v = $("#video"); v.srcObject = scan.stream; await v.play().catch(() => {});
   document.body.classList.add("scanning");
@@ -130,11 +145,21 @@ function onOrient(e) {
   if (scan.hist.length > 20) scan.hist.shift();
 }
 
+function onMotion(e) {
+  const r = e.rotationRate;
+  if (!scan || !r || r.alpha == null) return;
+  scan.motion.push([performance.now(), Math.hypot(r.alpha, r.beta, r.gamma)]); // deg/s
+  if (scan.motion.length > 60) scan.motion.shift();
+}
+
+// held still for ~0.6 s: compass barely moving and (when available) the gyro quiet → sharp photo
 function stable() {
   const now = performance.now();
-  const recent = scan.hist.filter(([t]) => now - t < 450);
-  if (recent.length < 3) return false;
-  return recent.every(([, h]) => Math.abs(angDiff(h, recent[0][1])) < 4);
+  const recent = scan.hist.filter(([t]) => now - t < 600);
+  if (recent.length < 4) return false;
+  if (!recent.every(([, h]) => Math.abs(angDiff(h, recent[0][1])) < 2.5)) return false;
+  const spin = scan.motion.filter(([t]) => now - t < 400);
+  return !spin.length || spin.every(([, v]) => v < 12);
 }
 
 function tick() {
@@ -145,7 +170,8 @@ function tick() {
     const s = Math.round(rel / SECTOR_DEG) % SECTORS;
     const off = Math.abs(angDiff(rel, s * SECTOR_DEG));
     snap = !scan.sectors[s] && off < 9;
-    if (snap && stable() && performance.now() - scan.lastCapture > 700) capture(rel, s);
+    scan.holding = snap && !stable();
+    if (snap && !scan.holding && performance.now() - scan.lastCapture > 700) capture(rel, s);
   }
   $("#reticle").classList.toggle("snap", snap);
   drawMap();
@@ -181,7 +207,7 @@ function capture(angle, sector) {
 }
 
 function addFrame(canvas, angle, sector) {
-  const f = { idx: scan.frames.length, angle, sector, canvas, status: "queued" };
+  const f = { idx: scan.frames.length, angle, sector, canvas, status: "queued", lens: scan.lens };
   scan.frames.push(f);
   if (sector != null && !scan.sectors[sector]) scan.sectors[sector] = 1;
   scan.queue.push(f);
@@ -206,11 +232,12 @@ function pump() {
 }
 
 // horizontal field of view of the captured frame (iPhone 1x lens)
-const hfov = c => c.width < c.height ? 51 : 65;
+// horizontal field of view of the captured frame: iPhone 1x vs 0.5x ultra-wide
+const hfov = (c, lens) => lens === "ultra" ? (c.width < c.height ? 90 : 105) : (c.width < c.height ? 51 : 65);
 
 function ingest(f, res) {
   f.status = "done";
-  const fov = hfov(f.canvas);
+  const fov = hfov(f.canvas, f.lens);
   const toXZ = (deg, d) => [Math.sin(deg * Math.PI / 180) * d, -Math.cos(deg * Math.PI / 180) * d];
   [["wall_left_m", -.45], ["wall_center_m", 0], ["wall_right_m", .45]].forEach(([k, frac]) => {
     const d = res[k];
@@ -229,7 +256,8 @@ function ingest(f, res) {
     const [x, z] = toXZ(a, d);
     const det = { id: `f${f.idx}-${i}`, frame: f.idx, angle: Math.round(a), distance_m: d, x: +x.toFixed(2), z: +z.toFixed(2),
       name: it.name, category: it.category, brand: it.brand, model: it.model, color_hex: it.color_hex, description: it.description,
-      width_m: it.width_m, depth_m: it.depth_m, height_m: it.height_m, confidence: it.confidence, bbox: it.bbox };
+      width_m: it.width_m, depth_m: it.depth_m, height_m: it.height_m, confidence: it.confidence, bbox: it.bbox,
+      mount: it.mount, elevation_m: it.elevation_m, resting_on: it.resting_on };
     scan.detections.push(det);
     // only announce things we haven't announced nearby already
     const dup = scan.detections.some(o => o !== det && o.name.toLowerCase() === det.name.toLowerCase() && Math.hypot(o.x - det.x, o.z - det.z) < 0.9);
@@ -249,11 +277,12 @@ function updateStatus() {
   const waiting = scan.inflight + scan.queue.length;
   let msg;
   if (got < SECTORS && !scan.hasCompass && !scan.uploadMode) msg = `No compass — tap the shutter as you turn (${got}/${SECTORS})`;
+  else if (got < SECTORS && scan.holding) msg = `<b>Hold still…</b> ${got}/${SECTORS}`;
   else if (got < SECTORS) msg = `Turn slowly · <b>${got}/${SECTORS}</b> captured`;
   else if (waiting) msg = `Map complete · identifying ${waiting} views…`;
   else msg = `<b>Map complete ✓</b>`;
   const items = new Set(scan.detections.map(d => d.name.toLowerCase())).size;
-  $("#scanStatus").innerHTML = msg + `<div class="small muted">${items} items spotted · ${usd(spend.usd)}</div>`;
+  $("#scanStatus").innerHTML = msg + `<div class="small muted">${items} items spotted · ${usd(spend.usd)}${scan.lens === "ultra" ? " · 0.5×" : ""}</div>`;
   $("#btnFinish").disabled = got < 4 || scan.finishing;
 }
 
@@ -320,6 +349,7 @@ function endScan() {
   scan.stream?.getTracks().forEach(t => t.stop());
   window.removeEventListener("deviceorientation", onOrient);
   window.removeEventListener("deviceorientationabsolute", onOrient);
+  window.removeEventListener("devicemotion", onMotion);
   document.body.classList.remove("scanning");
   scan = null;
 }
@@ -345,7 +375,7 @@ async function finishScan() {
     try {
       out = await consolidateRoom(getKey(), {
         roomName: s.roomName, bounds, floor: mode(s.floor), wallColor: mode(s.wallColor),
-        detections: s.detections.map(({ bbox, frame, ...d }) => d),
+        detections: s.detections.map(({ bbox, frame, ...d }) => d), // mount/elevation included
       });
     } catch (e) {
       console.error(e);
@@ -365,6 +395,7 @@ async function finishScan() {
       w: it.width_m, d: it.depth_m, h: it.height_m,
       price: it.est_price_ils, priceLow: it.price_low_ils, priceHigh: it.price_high_ils,
       store: it.likely_store, url: "", priceSource: "estimate", confidence: it.confidence,
+      shape: it.shape, wall: it.against_wall, mount: it.mount, elev: it.elevation_m, small: !!it.small_item,
       thumb: det ? thumbFrom(s.frames[det.frame].canvas, det.bbox) : "",
     };
   });
@@ -446,19 +477,27 @@ function priceTag(it) {
   return `<span class="tag">AI estimate</span>`;
 }
 
+// scans before build 5 have no small_item flag: treat cheap accessories as small
+const isSmall = it => it.small ?? (+it.price || 0) < 100;
+function itemRows(r, items) {
+  return [...items].sort((a, b) => (b.price || 0) - (a.price || 0)).map(it => `
+      <div class="item" data-room="${r.id}" data-item="${it.id}">
+        ${it.thumb ? `<img src="${it.thumb}" alt="">` : `<div class="thumb-ph"></div>`}
+        <div class="meta"><div class="name">${esc(it.name)}</div>
+          <div class="muted small">${esc([it.brand, it.store].filter(Boolean).join(" · ") || it.category)}</div>${priceTag(it)}</div>
+        <div class="price">${ils(it.price)}</div>
+      </div>`).join("");
+}
+
 function renderCatalog() {
   $("#roomChips").innerHTML = chipsHtml(currentCatRoom, true);
   const rooms = currentCatRoom === "all" ? db.rooms : db.rooms.filter(r => r.id === currentCatRoom);
   if (!rooms.length) { $("#catalogList").innerHTML = `<p class="muted small" style="text-align:center">Nothing cataloged yet.</p>`; return; }
   $("#catalogList").innerHTML = rooms.map(r => `
     ${currentCatRoom === "all" ? `<h3 style="margin:14px 2px 8px">${esc(r.name)}</h3>` : ""}
-    ${[...r.items].sort((a, b) => (b.price || 0) - (a.price || 0)).map(it => `
-      <div class="item" data-room="${r.id}" data-item="${it.id}">
-        ${it.thumb ? `<img src="${it.thumb}" alt="">` : `<div class="thumb-ph"></div>`}
-        <div class="meta"><div class="name">${esc(it.name)}</div>
-          <div class="muted small">${esc([it.brand, it.store].filter(Boolean).join(" · ") || it.category)}</div>${priceTag(it)}</div>
-        <div class="price">${ils(it.price)}</div>
-      </div>`).join("")}
+    ${itemRows(r, r.items.filter(i => !isSmall(i)))}
+    ${r.items.some(isSmall) ? `<details class="small-group"><summary>Small items (${r.items.filter(isSmall).length}) · ${ils(r.items.filter(isSmall).reduce((s, i) => s + (+i.price || 0), 0))}</summary>
+      ${itemRows(r, r.items.filter(isSmall))}</details>` : ""}
     <div class="total"><span>${esc(r.name)} total</span><span>${ils(roomTotal(r))}</span></div>`).join("");
 }
 $("#roomChips").addEventListener("click", e => { const b = e.target.closest("[data-room]"); if (b) { currentCatRoom = b.dataset.room; renderCatalog(); } });

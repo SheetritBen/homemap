@@ -92,6 +92,8 @@
   .item .price { font-weight: 600; text-align: right; white-space: nowrap; }
   .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--panel2); color: var(--muted); }
   .tag.ok { background: #4fd1a522; color: var(--accent); }
+  .small-group { margin: 4px 0 6px; }
+  .small-group summary { cursor: pointer; color: var(--muted); padding: 10px 2px; font-size: 14px; }
   .total { display: flex; justify-content: space-between; padding: 12px 2px; font-weight: 600; }
 
   /* sheet */
@@ -139,7 +141,7 @@
       <input id="roomName" placeholder="Room name" value="Office" style="margin-bottom:10px">
       <button class="primary" id="btnStartScan" style="width:100%">Start scan</button>
       <button id="btnUpload" style="width:100%;margin-top:8px">Or upload room photos</button>
-      <p class="muted small" style="text-align:center;margin:10px 0 0">build 4</p>
+      <p class="muted small" style="text-align:center;margin:10px 0 0">build 5</p>
       <input type="file" id="fileUpload" accept="image/*" multiple hidden>
     </div>
     <div id="roomList"></div>
@@ -194,7 +196,7 @@
     </div>
     <div class="card">
       <b>Data</b>
-      <p class="muted small">Everything lives on this phone. Build 4.</p>
+      <p class="muted small">Everything lives on this phone. Build 5.</p>
       <button id="btnExport2" style="margin-bottom:8px">Export scans</button><br>
       <button id="btnWipe">Delete all rooms</button>
     </div>
@@ -212,6 +214,6 @@
 
 <div class="busy" id="busy"><div class="spinner"></div><div id="busyMsg">Working…</div><div class="muted small" id="busySub"></div></div>
 
-<script type="module" src="app.js?v=4"></script>
+<script type="module" src="app.js?v=5"></script>
 </body>
 </html>

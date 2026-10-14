@@ -16,3 +16,8 @@
 - [ ] Export scans → one JSON (rooms, items, photos, cost, raw detections/walls) via share sheet
 - [ ] `?mock` runs the whole flow with fake detections (no key, no cost)
 - [ ] Works at 390px width
+- [ ] Capture: uses 0.5x ultra-wide when Safari exposes it ("0.5×" in status); "Hold still…" until compass + gyro are steady
+- [ ] 3D layout: sofas/wardrobes/desks flush against walls, desk items on the desk, pillows on sofa, wall art/AC hung on walls (hidden with their wall), chairs face desk, no overlaps
+- [ ] 3D models: sofa (arms/cushions/legs), chairs (legs), office chair, desk, monitor (stand + screen), laptop (open lid), wardrobe (doors/handles), AC, printer, bags, pillows…
+- [ ] Old scans (no shape data) still render via name-based shape guessing
+- [ ] Catalog: small accessories folded into a "Small items" group
