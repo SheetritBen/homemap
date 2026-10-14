@@ -1,4 +1,4 @@
-import { analyzeFrame, consolidateRoom, lookupPrice, testKey, MOCK } from "./ai.js";
+import { analyzeFrame, consolidateRoom, testKey, spend, MOCK } from "./ai.js";
 import { createView } from "./view3d.js";
 
 const $ = s => document.querySelector(s);
@@ -37,7 +37,7 @@ function renderHome() {
   $("#keyWarn").hidden = !!getKey() || MOCK;
   $("#roomList").innerHTML = db.rooms.length ? db.rooms.map(r => `
     <div class="card room-row">
-      <div class="meta"><b>${esc(r.name)}</b><div class="muted small">${r.items.length} items · ${ils(roomTotal(r))}</div></div>
+      <div class="meta"><b>${esc(r.name)}</b><div class="muted small">${r.items.length} items · ${ils(roomTotal(r))}${r.cost != null ? ` · scan cost ${usd(r.cost)}` : ""}</div></div>
       <button data-act="3d" data-id="${r.id}">3D</button>
       <button data-act="cat" data-id="${r.id}">List</button>
       <button data-act="del" data-id="${r.id}" aria-label="Delete room">✕</button>
@@ -65,10 +65,13 @@ $("#btnWipe").onclick = () => { if (confirm("Delete every room and item?")) { db
 // =====================================================================
 // SCAN
 // =====================================================================
-const SECTORS = 12, SECTOR_DEG = 360 / SECTORS;
+const SECTORS = 8, SECTOR_DEG = 360 / SECTORS;
+const MAX_PX = 1024; // longest side sent to Claude — image tokens scale with pixel count
 let scan = null;
+const usd = n => "$" + (n < 0.1 ? n.toFixed(3) : n.toFixed(2));
 
 function newScan(roomName) {
+  spend.usd = 0;
   return {
     roomName, frames: [], sectors: Array(SECTORS).fill(0), // 0 none, 1 analysing, 2 done
     walls: [], detections: [], floor: [], wallColor: [],
@@ -149,7 +152,7 @@ $("#btnShutter").onclick = () => {
 
 function grabFrame() {
   const v = $("#video");
-  const scale = Math.min(1, 1280 / Math.max(v.videoWidth, v.videoHeight));
+  const scale = Math.min(1, MAX_PX / Math.max(v.videoWidth, v.videoHeight));
   const c = document.createElement("canvas");
   c.width = Math.round(v.videoWidth * scale); c.height = Math.round(v.videoHeight * scale);
   c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
@@ -232,12 +235,12 @@ function updateStatus() {
   const got = scan.sectors.filter(Boolean).length;
   const waiting = scan.inflight + scan.queue.length;
   let msg;
-  if (!scan.hasCompass && !scan.uploadMode) msg = `No compass — tap the shutter as you turn (${got}/${SECTORS})`;
+  if (got < SECTORS && !scan.hasCompass && !scan.uploadMode) msg = `No compass — tap the shutter as you turn (${got}/${SECTORS})`;
   else if (got < SECTORS) msg = `Turn slowly · <b>${got}/${SECTORS}</b> captured`;
   else if (waiting) msg = `Map complete · identifying ${waiting} views…`;
   else msg = `<b>Map complete ✓</b>`;
   const items = new Set(scan.detections.map(d => d.name.toLowerCase())).size;
-  $("#scanStatus").innerHTML = msg + `<div class="small muted">${items} items spotted</div>`;
+  $("#scanStatus").innerHTML = msg + `<div class="small muted">${items} items spotted · ${usd(spend.usd)}</div>`;
   $("#btnFinish").disabled = got < 4 || scan.finishing;
 }
 
@@ -346,13 +349,12 @@ async function finishScan() {
   });
 
   const existing = db.rooms.find(r => r.name.toLowerCase() === s.roomName.toLowerCase());
-  const room = { id: existing?.id || uid(), name: s.roomName, scannedAt: Date.now(), bounds, floor: out.floor, wallColor: out.wall_color, items };
+  const room = { id: existing?.id || uid(), name: s.roomName, scannedAt: Date.now(), cost: spend.usd, bounds, floor: out.floor, wallColor: out.wall_color, items };
   db.rooms = db.rooms.filter(r => r !== existing).concat(room);
   save();
   endScan(); busy();
   current3dRoom = room.id; currentCatRoom = room.id;
   go("view3d");
-  verifyPrices(room.id);
 }
 
 const clampTo = (v, a, b) => Math.min(b - 0.15, Math.max(a + 0.15, +v || 0));
@@ -361,27 +363,12 @@ function thumbFrom(canvas, bbox) {
   const pad = 0.04;
   const x0 = Math.max(0, (bbox?.x0 ?? 0) - pad) * canvas.width, y0 = Math.max(0, (bbox?.y0 ?? 0) - pad) * canvas.height;
   const x1 = Math.min(1, (bbox?.x1 ?? 1) + pad) * canvas.width, y1 = Math.min(1, (bbox?.y1 ?? 1) + pad) * canvas.height;
-  const sw = Math.max(8, x1 - x0), sh = Math.max(8, y1 - y0), side = 240, sc = side / Math.max(sw, sh);
+  const sw = Math.max(8, x1 - x0), sh = Math.max(8, y1 - y0), side = 360, sc = side / Math.max(sw, sh);
   const c = document.createElement("canvas"); c.width = Math.round(sw * sc); c.height = Math.round(sh * sc);
   c.getContext("2d").drawImage(canvas, x0, y0, sw, sh, 0, 0, c.width, c.height);
   return c.toDataURL("image/jpeg", 0.72);
 }
 
-// background: look up real Israeli prices, one item at a time-ish
-async function verifyPrices(roomId) {
-  const room = db.rooms.find(r => r.id === roomId); if (!room) return;
-  const todo = room.items.filter(i => i.priceSource === "estimate");
-  todo.forEach(i => i.checking = true);
-  const run = async it => {
-    try {
-      const r = await lookupPrice(getKey(), it);
-      if (r && r.price_ils > 0) Object.assign(it, { price: r.price_ils, store: r.store || it.store, url: r.url || "", priceSource: r.exact_match ? "exact" : "similar", matched: r.matched_product || "" });
-    } catch (e) { console.warn("price lookup failed", it.name, e); }
-    it.checking = false; save(); refreshVisible();
-  };
-  const q = [...todo];
-  await Promise.all([0, 1].map(async () => { while (q.length) await run(q.shift()); }));
-}
 function refreshVisible() {
   if ($("#catalog").classList.contains("active")) renderCatalog();
   if ($("#home").classList.contains("active")) renderHome();
@@ -398,7 +385,7 @@ $("#fileUpload").onchange = async e => {
   const n = files.length;
   for (let i = 0; i < n; i++) {
     const img = await createImageBitmap(files[i]);
-    const sc = Math.min(1, 1280 / Math.max(img.width, img.height));
+    const sc = Math.min(1, MAX_PX / Math.max(img.width, img.height));
     const c = document.createElement("canvas"); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
     c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
     const angle = i * 360 / n, sector = n >= SECTORS ? Math.round(angle / SECTOR_DEG) % SECTORS : null;
@@ -431,11 +418,8 @@ function render3d() {
 $("#roomChips3d").addEventListener("click", e => { const b = e.target.closest("[data-room]"); if (b) { current3dRoom = b.dataset.room; render3d(); } });
 
 function priceTag(it) {
-  if (it.checking) return `<span class="tag">checking price…</span>`;
-  if (it.priceSource === "exact") return `<span class="tag ok">price verified</span>`;
-  if (it.priceSource === "similar") return `<span class="tag ok">similar product</span>`;
   if (it.priceSource === "manual") return `<span class="tag ok">your price</span>`;
-  return `<span class="tag">estimate</span>`;
+  return `<span class="tag">AI estimate</span>`;
 }
 
 function renderCatalog() {
@@ -478,10 +462,16 @@ function openSheet(it) {
       <span class="k">Bought at</span><input data-f="store" value="${esc(it.store)}">
       ${it.priceLow ? `<span class="k">Range</span><span>${ils(it.priceLow)} – ${ils(it.priceHigh)}</span>` : ""}
       ${it.matched ? `<span class="k">Matched</span><span>${esc(it.matched)}</span>` : ""}
-      ${it.url ? `<span class="k">Source</span><a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(new URL(it.url, location.href).hostname)}</a>` : ""}
       <span class="k">Category</span><span>${esc(it.category)}</span>
       <span class="k">Size (cm)</span><span>${dims}</span>
       <span class="k">Notes</span><span class="small">${esc(it.description)}</span>
+    </div>
+    <div class="k small muted" style="margin-top:16px">Check the real price (free)</div>
+    <div class="price-links">
+      <a href="${searchUrl("zap", it)}" target="_blank" rel="noopener">Zap</a>
+      <a href="${searchUrl("ksp", it)}" target="_blank" rel="noopener">KSP</a>
+      <a href="${searchUrl("shop", it)}" target="_blank" rel="noopener">Google Shopping</a>
+      ${it.thumb ? `<button id="sheetLens">Google Lens</button>` : ""}
     </div>
     <div style="display:flex;gap:8px;margin-top:16px">
       <button id="sheetClose" class="primary" style="flex:1">Done</button>
@@ -493,6 +483,7 @@ function openSheet(it) {
     save();
   });
   $("#sheetClose").onclick = closeSheet;
+  if ($("#sheetLens")) $("#sheetLens").onclick = () => shareToLens(it);
   $("#sheetDel").onclick = () => {
     if (!confirm(`Remove ${it.name}?`)) return;
     room.items = room.items.filter(i => i !== it); save(); closeSheet();
@@ -500,6 +491,23 @@ function openSheet(it) {
   };
   $("#sheet").classList.add("on"); $("#sheetBack").classList.add("on");
 }
+function searchUrl(site, it) {
+  const q = encodeURIComponent([it.brand, it.model, it.name].filter(Boolean).join(" "));
+  if (site === "zap") return `https://www.zap.co.il/search.aspx?keyword=${q}`;
+  if (site === "ksp") return `https://www.google.com/search?q=${q}+site%3Aksp.co.il`;
+  return `https://www.google.com/search?tbm=shop&gl=il&hl=iw&q=${q}`;
+}
+
+// iPhone: share the item photo → pick the Google app → it runs Lens on it
+async function shareToLens(it) {
+  try {
+    const blob = await (await fetch(it.thumb)).blob();
+    const file = new File([blob], `${it.name.replace(/\W+/g, "-")}.jpg`, { type: "image/jpeg" });
+    if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file] });
+  } catch (e) { if (e.name === "AbortError") return; }
+  window.open(`https://lens.google.com/`, "_blank");
+}
+
 function closeSheet() {
   $("#sheet").classList.remove("on"); $("#sheetBack").classList.remove("on");
   view3d?.select(null); refreshVisible();
@@ -507,5 +515,4 @@ function closeSheet() {
 $("#sheetBack").onclick = closeSheet;
 
 // resume any price checks interrupted by a reload
-db.rooms.forEach(r => r.items.forEach(i => { if (i.checking) i.checking = false; }));
 go("home");

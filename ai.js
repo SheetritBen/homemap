@@ -1,10 +1,20 @@
 // Claude calls. Browser-direct with the user's own key (stored on-device only).
 import Anthropic from "anthropic";
 
-const MODEL = "claude-opus-5-5";
+// Sonnet 5.5 chosen for cost (Ben, 2026-10-14): recognition is what the kill test measures, so not Haiku.
+const MODEL = "claude-sonnet-5-5";
+const PRICE_IN = 2 / 1e6, PRICE_OUT = 10 / 1e6; // USD per token
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
 export const MOCK = new URLSearchParams(location.search).has("mock");
+
+// running spend meter (USD), read and reset by the app per scan
+export const spend = { usd: 0 };
+function meter(res) {
+  const u = res.usage || {};
+  spend.usd += ((u.input_tokens || 0) + (u.cache_creation_input_tokens || 0)) * PRICE_IN
+    + (u.cache_read_input_tokens || 0) * PRICE_IN * 0.1 + (u.output_tokens || 0) * PRICE_OUT;
+}
 
 function client(apiKey) {
   return new Anthropic({ apiKey, dangerouslyAllowBrowser: true, maxRetries: 3 });
@@ -22,6 +32,7 @@ async function create(apiKey, params) {
       res = await c.beta.messages.create(params);
     } else throw err;
   }
+  meter(res);
   if (res.stop_reason === "refusal") throw new Error("Claude declined this request");
   return res;
 }
@@ -120,33 +131,6 @@ export async function consolidateRoom(apiKey, { roomName, bounds, detections, fl
   return JSON.parse(textOf(res));
 }
 
-// ---------- web price check (Israeli retailers) ----------
-
-export async function lookupPrice(apiKey, item) {
-  if (MOCK) return null;
-  const tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 4,
-    user_location: { type: "approximate", country: "IL", timezone: "Asia/Jerusalem" } }];
-  const messages = [{ role: "user", content:
-`Find the current price in Israel (ILS, incl. VAT) for this item from a home inventory:
-${JSON.stringify({ name: item.name, brand: item.brand, model: item.model, category: item.category, description: item.description })}
-
-Prefer Israeli retailers and price comparison: zap.co.il, ksp.co.il, ivory.co.il, bug.co.il, ikea.co.il, homecenter.co.il, ace.co.il, lastprice.co.il. If the exact model is unknown, find a comparable product of the same type and quality and say so.
-
-End your reply with ONLY a JSON object on the last line:
-{"price_ils": number, "store": string, "url": string, "matched_product": string, "exact_match": boolean}` }];
-
-  let res;
-  for (let turn = 0; turn < 3; turn++) {
-    res = await create(apiKey, { model: MODEL, max_tokens: 16000, tools, messages });
-    if (res.stop_reason !== "pause_turn") break;
-    messages.push({ role: "assistant", content: res.content });
-  }
-  const text = textOf(res);
-  const m = text.match(/\{[^{}]*"price_ils"[^{}]*\}/g);
-  if (!m) return null;
-  try { return JSON.parse(m[m.length - 1]); } catch { return null; }
-}
-
 // ---------- mock mode (?mock) for UI testing without a key ----------
 
 const MOCK_SETS = [
@@ -161,6 +145,7 @@ const MOCK_SETS = [
 ];
 let mockI = 0;
 async function mockFrame() {
+  meter({ usage: { input_tokens: 1500, output_tokens: 900 } }); // typical real frame
   await new Promise(r => setTimeout(r, 600 + Math.random() * 900));
   const set = MOCK_SETS[mockI++ % MOCK_SETS.length];
   return {
@@ -173,6 +158,7 @@ async function mockFrame() {
   };
 }
 async function mockRoom(detections) {
+  meter({ usage: { input_tokens: 5000, output_tokens: 4000 } });
   await new Promise(r => setTimeout(r, 800));
   const prices = { Desk: 890, "27-inch monitor": 1190, "Mechanical keyboard": 349, Laptop: 4200, "AC unit": 2900,
     Closet: 1450, "2-seat sofa": 2600, "Throw pillow": 79, "Office chair": 990, "3D printer": 2400, Backpack: 299 };

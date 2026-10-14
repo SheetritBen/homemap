@@ -6,4 +6,5 @@ Kill-test prototype for the home-scan "digital twin" idea. Static site, no build
 - Claude is called browser-direct with the user's OWN key pasted in Settings (localStorage). Never put a key in code.
 - Base iPhone 17 has no LiDAR; the map comes from compass heading + Claude's distance estimates, not AR.
 - Israeli market: prices in ₪, Israeli retailers (zap/ksp/ivory/ikea.co.il...).
+- Cost (2026-10-14): Sonnet 5.5, 8 frames @1024px, NO automatic web price search (was ~75% of cost). Prices = AI estimate + free search links. Next step if test passes: SerpApi Google Shopping (gl=il) via a Cloudflare Worker, ~1.5¢/item.
 - `?mock` = fake detections for UI testing without a key.
